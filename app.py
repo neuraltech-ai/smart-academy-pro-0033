@@ -68,7 +68,6 @@ def parse_filename_metadata(filename):
     sem = re.search(r'SEM[_-]?(\d+)', fn) or re.search(r'W(\d+)', fn)
     sea = re.search(r'_S(\d+)', fn) or re.search(r'SEANCE[_-]?(\d+)', fn)
     ncm = re.search(r'NCM[_-]?(\d+)', fn)
-
     if lvl: meta['level'] = lvl.group(1)
     if per: meta['periode'] = per.group(1)
     if uni: meta['unite'] = uni.group(1)
@@ -80,16 +79,10 @@ def parse_filename_metadata(filename):
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.15):
     candidate_models = get_available_models(api_key)
     gen_config = {"temperature": temperature}
-    if json_mode:
-        gen_config["responseMimeType"] = "application/json"
-
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": gen_config
-    }
+    if json_mode: gen_config["responseMimeType"] = "application/json"
+    payload = {"contents": [{"parts": parts}], "generationConfig": gen_config}
     headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
     last_error = ""
-
     for attempt in range(2):
         for model_name in candidate_models:
             try:
@@ -97,11 +90,10 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.15):
                 res = requests.post(url, json=payload, headers=headers, timeout=60)
                 res_data = res.json()
                 if res.status_code == 200 and 'candidates' in res_data:
-                    raw_text = res_data['candidates'][0]['content']['parts'][0]['text']
-                    return raw_text, None
+                    return res_data['candidates'][0]['content']['parts'][0]['text'], None
                 else:
-                    last_error = res_data.get('error', {}).get('message', 'يرجى المحاولة بعد لحظات')
-                    time.sleep(0.6)
+                    last_error = res_data.get('error', {}).get('message', 'خطأ')
+                    time.sleep(0.5)
                     continue
             except Exception as e:
                 last_error = str(e)
@@ -119,11 +111,7 @@ HTML_TEMPLATE = """
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         window.MathJax = {
-            tex: {
-                inlineMath: [['$', '$'], ['\\\\(', '\\\\)']],
-                displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']],
-                processEscapes: true
-            },
+            tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']], processEscapes: true },
             options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
         };
     </script>
@@ -131,9 +119,12 @@ HTML_TEMPLATE = """
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Cairo', sans-serif; background: #0b1120; color: #f8fafc; margin: 0; overflow-x: hidden; }
-        .glass-panel { background: rgba(30, 41, 59, 0.9); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.08); }
-        .nav-tab { transition: all 0.2s ease; cursor: pointer; }
-        .nav-tab.active { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border-color: #60a5fa; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.4); }
+        .glass-panel { background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.1); }
+        .app-section { display: none; }
+        .app-section.active-section { display: block; }
+        .nav-card { cursor: pointer; transition: all 0.2s ease; }
+        .nav-card:hover { transform: translateY(-2px); }
+        .nav-card.active { border-color: #38bdf8 !important; background: rgba(56, 189, 248, 0.15) !important; }
 
         .sheet-scroll-viewport { width: 100%; overflow-x: auto; padding-bottom: 12px; display: flex; justify-content: center; }
         .ncm-sheet { background: #ffffff; color: #0f172a; border-radius: 14px; padding: 18px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.55); width: 1120px; min-width: 1120px; max-width: 1120px; margin: 0 auto; position: relative; border: 1px solid #cbd5e1; box-sizing: border-box; }
@@ -176,39 +167,42 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body class="p-3 md:p-6">
-    <!-- شريط التنقل المحسن للهواتف -->
-    <div class="max-w-6xl mx-auto no-print">
-        <header class="flex flex-col md:flex-row items-center justify-between gap-3 mb-5 glass-panel p-4 rounded-2xl">
-            <div class="flex items-center gap-3 w-full md:w-auto justify-between">
-                <div class="flex items-center gap-2">
-                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-cyan-500 flex items-center justify-center shadow">
-                        <span class="text-lg">🎓</span>
-                    </div>
-                    <div>
-                        <h1 class="text-base font-black text-white">المنصة الذكية <span class="text-cyan-400">Pro</span></h1>
-                        <p class="text-[11px] text-slate-400">الخطاطات والمسائل والملخصات والترجمة</p>
-                    </div>
+    <!-- لوحة التنقل الرئيسية الواضحة والمريحة باللمس -->
+    <div class="max-w-6xl mx-auto no-print mb-6">
+        <header class="glass-panel p-4 rounded-3xl shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-cyan-400 flex items-center justify-center shadow-lg">
+                    <span class="text-xl">🎓</span>
                 </div>
-                <button onclick="toggleApiModal()" class="p-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-slate-300 md:hidden">⚙️</button>
+                <div>
+                    <h1 class="text-lg font-black text-white">المنصة التعليمية الذكية <span class="text-cyan-400">Pro</span></h1>
+                    <p class="text-xs text-slate-400">اختر القسم المطلوب أدناه للاستخدام الفوري</p>
+                </div>
             </div>
-
-            <!-- أزرار الأقسام المتجاوبة -->
-            <div class="grid grid-cols-2 sm:flex items-center gap-2 w-full md:w-auto">
-                <button type="button" onclick="switchSection('ncm', this)" class="nav-tab active px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-[11px] font-extrabold flex items-center justify-center gap-1">
-                    <span>🗺️</span> خطاطات (NCM)
-                </button>
-                <button type="button" onclick="switchSection('solver', this)" class="nav-tab px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-[11px] font-extrabold text-slate-300 flex items-center justify-center gap-1">
-                    <span>🧮</span> حل المسائل
-                </button>
-                <button type="button" onclick="switchSection('summarizer', this)" class="nav-tab px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-[11px] font-extrabold text-slate-300 flex items-center justify-center gap-1">
-                    <span>📑</span> الملخص الذكي
-                </button>
-                <button type="button" onclick="switchSection('translator', this)" class="nav-tab px-3 py-2 rounded-xl border border-slate-700 bg-slate-800 text-[11px] font-extrabold text-slate-300 flex items-center justify-center gap-1">
-                    <span>🌐</span> الترجمة
-                </button>
-                <button type="button" onclick="toggleApiModal()" class="hidden md:block p-2 rounded-xl bg-slate-800 border border-slate-700 text-xs text-slate-400">⚙️</button>
-            </div>
+            <button onclick="toggleApiModal()" class="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 flex items-center gap-1.5">
+                <span>⚙️</span> إعداد مفتاح API
+            </button>
         </header>
+
+        <!-- بطاقات التنقل الكبيرة والبارزة (تستجيب 100% باللمس) -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+            <div onclick="switchSection('ncm', this)" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-800/90 border-2 border-cyan-500 shadow-md flex flex-col items-center text-center gap-1">
+                <span class="text-2xl">🗺️</span>
+                <span class="text-xs font-black text-white">خطاطات الرائدة (NCM)</span>
+            </div>
+            <div onclick="switchSection('solver', this)" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+                <span class="text-2xl">🧮</span>
+                <span class="text-xs font-black text-slate-200">حلّال المسائل المعقدة</span>
+            </div>
+            <div onclick="switchSection('summarizer', this)" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+                <span class="text-2xl">📑</span>
+                <span class="text-xs font-black text-slate-200">الملخص الذكي للملفات</span>
+            </div>
+            <div onclick="switchSection('translator', this)" id="card-translator" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+                <span class="text-2xl">🌐</span>
+                <span class="text-xs font-black text-slate-200">المترجم الأكاديمي</span>
+            </div>
+        </div>
 
         <div id="apiModal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
             <div class="glass-panel p-6 rounded-3xl max-w-md w-full border border-blue-500/40">
@@ -223,7 +217,7 @@ HTML_TEMPLATE = """
     </div>
 
     <!-- ==================== القسم 1: الخطاطات ==================== -->
-    <div id="sec-ncm" class="app-section max-w-6xl mx-auto">
+    <div id="sec-ncm" class="app-section active-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-5 shadow-2xl mb-6 no-print">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
                 <div class="lg:col-span-2">
@@ -234,7 +228,7 @@ HTML_TEMPLATE = """
                             <span id="ncmFileName" class="text-xs font-bold text-slate-200">اختر ملف (.pptx / .pdf / صورة)</span>
                             <input type="file" id="ncmFileInput" accept=".pptx,.ppt,.pdf,image/*,.txt" class="hidden" onchange="handleNcmFile(this)">
                         </label>
-                        <button id="ncmClearBtn" onclick="clearNcmFile()" class="hidden px-3 rounded-2xl bg-red-500/20 text-red-400 text-xs font-bold">حذف</button>
+                        <button type="button" id="ncmClearBtn" onclick="clearNcmFile()" class="hidden px-3 rounded-2xl bg-red-500/20 text-red-400 text-xs font-bold">حذف</button>
                     </div>
                     <textarea id="ncmTextInput" rows="3" placeholder="أو الصق نص الدرس هنا..." class="w-full p-3 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs"></textarea>
                 </div>
@@ -304,7 +298,7 @@ HTML_TEMPLATE = """
     </div>
 
     <!-- ==================== القسم 2: حل المسائل ==================== -->
-    <div id="sec-solver" class="app-section hidden max-w-5xl mx-auto">
+    <div id="sec-solver" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-cyan-400 mb-1">🧮 حلّال المسائل والتمارين (بنفس لغة التمرين)</h2>
             <p class="text-xs text-slate-400 mb-4">ارفع صورة التمرين أو ملفاً للحصول على الحل المفصل خطوة بخطوة.</p>
@@ -354,7 +348,7 @@ HTML_TEMPLATE = """
     </div>
 
     <!-- ==================== القسم 3: الملخص الذكي ==================== -->
-    <div id="sec-summarizer" class="app-section hidden max-w-5xl mx-auto">
+    <div id="sec-summarizer" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-amber-400 mb-1">📑 الملخص الذكي للملفات والدروس</h2>
             <p class="text-xs text-slate-400 mb-4">ارفع أي ملف لتحويله إلى ملخص احترافي مهيكل.</p>
@@ -392,7 +386,7 @@ HTML_TEMPLATE = """
     </div>
 
     <!-- ==================== القسم 4: الترجمة ==================== -->
-    <div id="sec-translator" class="app-section hidden max-w-5xl mx-auto">
+    <div id="sec-translator" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-emerald-400 mb-1">🌐 المترجم الأكاديمي والتربوي الدقيق</h2>
             <p class="text-xs text-slate-400 mb-4">ترجمة دقيقة تحافظ على المصطلحات والمعادلات.</p>
@@ -461,10 +455,13 @@ HTML_TEMPLATE = """
         }
 
         function switchSection(secId, btn) {
-            document.querySelectorAll('.app-section').forEach(el => el.classList.add('hidden'));
-            document.getElementById('sec-' + secId).classList.remove('hidden');
-            document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+            document.querySelectorAll('.app-section').forEach(el => el.classList.remove('active-section'));
+            document.getElementById('sec-' + secId).classList.add('active-section');
+            document.querySelectorAll('.nav-card').forEach(b => b.classList.remove('active', 'border-cyan-500'));
+            const card = document.getElementById('card-id-' + secId) || document.getElementById('card-' + secId);
+            if (card) {
+                card.classList.add('active', 'border-cyan-500');
+            }
             if (secId === 'ncm') setTimeout(drawConnectors, 60);
         }
 
