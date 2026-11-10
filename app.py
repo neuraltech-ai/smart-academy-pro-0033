@@ -5,14 +5,36 @@ import json
 import re
 import time
 import zipfile
+import threading
 import xml.etree.ElementTree as ET
 
 app = Flask(__name__)
 AVAILABLE_MODELS_CACHE = {}
 
+# 1. منع متصفح الهاتف من تخزين النسخ القديمة (حل نهائي لمشكلة الكاش)
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+# 2. مسار الفحص الصحي الضروري لـ Render لمنع تعليق التحديثات
 @app.route('/health')
 def health_check():
     return jsonify({"status": "healthy", "alive": True}), 200
+
+# 3. منبه خلفي لإبقاء الموقع نشطاً 24/7
+def keep_alive_ping():
+    url = os.environ.get("RENDER_EXTERNAL_URL", "https://smart-academy-pro.onrender.com") + "/health"
+    while True:
+        time.sleep(600)  # كل 10 دقائق
+        try:
+            requests.get(url, timeout=10)
+        except Exception:
+            pass
+
+threading.Thread(target=keep_alive_ping, daemon=True).start()
 
 def get_available_models(api_key):
     if api_key in AVAILABLE_MODELS_CACHE and AVAILABLE_MODELS_CACHE[api_key]:
@@ -130,6 +152,8 @@ HTML_TEMPLATE = r"""
         .nav-card, .st-btn { cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; transition: all 0.15s ease; }
         .nav-card.active { border-color: #38bdf8 !important; background: rgba(56, 189, 248, 0.22) !important; box-shadow: 0 0 15px rgba(56, 189, 248, 0.35); }
         .st-btn.active-st { border-color: #06b6d4 !important; background: rgba(6, 182, 212, 0.25) !important; color: #67e8f9 !important; }
+        .cta-btn { transition: all 0.2s ease; box-shadow: 0 8px 20px -4px rgba(6, 182, 212, 0.45); }
+        .cta-btn:active { transform: scale(0.98); }
 
         .sheet-scroll-viewport { width: 100%; overflow-x: auto; padding-bottom: 12px; display: flex; justify-content: center; }
         .ncm-sheet { background: #ffffff; color: #0f172a; border-radius: 14px; padding: 18px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.55); width: 1120px; min-width: 1120px; max-width: 1120px; margin: 0 auto; position: relative; border: 1px solid #cbd5e1; box-sizing: border-box; }
@@ -180,7 +204,7 @@ HTML_TEMPLATE = r"""
                 </div>
                 <div>
                     <h1 class="text-lg font-black text-white">المنصة التعليمية الذكية <span class="text-cyan-400">Pro</span></h1>
-                    <p class="text-xs text-slate-400">اضغط على أي قسم أدناه للانتقال إليه فوراً</p>
+                    <p class="text-xs text-slate-400">اضغط على أي أداة أدناه للانتقال الفوري</p>
                 </div>
             </div>
             <button type="button" onclick="toggleApiModal()" class="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 flex items-center gap-1.5">
@@ -222,7 +246,7 @@ HTML_TEMPLATE = r"""
     <!-- القسم 1: الخطاطات -->
     <div id="sec-ncm" class="app-section active-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-5 shadow-2xl mb-6 no-print">
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
                 <div class="lg:col-span-2">
                     <label class="block text-xs font-bold text-cyan-400 mb-2">1. ارفع ملف الدرس أو الصق محتواه:</label>
                     <div class="flex gap-2 mb-2.5">
@@ -260,14 +284,15 @@ HTML_TEMPLATE = r"""
                 </div>
             </div>
 
-            <button type="button" onclick="generateNCM()" id="ncmGenBtn" class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-600 font-black text-white text-sm shadow-lg">
-                <span id="ncmBtnText">توليد الخطاطة الرسمية بالترويسة الكاملة ⚡</span>
+            <button type="button" onclick="generateNCM()" id="ncmGenBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 border border-cyan-300/30 font-black text-white text-sm tracking-wide flex items-center justify-center gap-2">
+                <span>توليد خطاطة الدرس (NCM)</span>
+                <span class="text-base">⚡</span>
             </button>
         </div>
 
         <div id="printBar" class="hidden mb-3 flex flex-wrap items-center justify-between gap-2 glass-panel px-4 py-2.5 rounded-2xl no-print">
             <span class="text-xs font-bold text-emerald-400">✅ الخطاطة جاهزة (قابلة للتعديل باللمس)</span>
-            <button type="button" onclick="window.print()" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / PDF</button>
+            <button type="button" onclick="window.print()" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / حفظ PDF</button>
         </div>
 
         <div id="sheetWrapper" class="hidden sheet-scroll-viewport">
@@ -336,7 +361,7 @@ HTML_TEMPLATE = r"""
                     </div>
                 </div>
             </div>
-            <button type="button" onclick="runSmartTool('solver')" id="solverBtn" class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 font-black text-white text-sm shadow-lg">حل المسألة بدقة متناهية 🚀</button>
+            <button type="button" onclick="runSmartTool('solver')" id="solverBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-600 to-blue-600 border border-cyan-300/30 font-black text-white text-sm">حل المسألة خطوة بخطوة 🚀</button>
         </div>
         <div id="solverResultBox" class="hidden glass-panel rounded-3xl p-6 prose-print-box">
             <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4 no-print">
@@ -377,7 +402,7 @@ HTML_TEMPLATE = r"""
                     </select>
                 </div>
             </div>
-            <button type="button" onclick="runSmartTool('summarizer')" id="summarizerBtn" class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 font-black text-slate-950 text-sm shadow-lg">توليد الملخص الاحترافي الآن ✨</button>
+            <button type="button" onclick="runSmartTool('summarizer')" id="summarizerBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 font-black text-slate-950 text-sm">توليد الملخص المهيكل ✨</button>
         </div>
         <div id="summarizerResultBox" class="hidden glass-panel rounded-3xl p-6 prose-print-box">
             <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4 no-print">
@@ -414,7 +439,7 @@ HTML_TEMPLATE = r"""
                     </select>
                 </div>
             </div>
-            <button type="button" onclick="runSmartTool('translator')" id="translatorBtn" class="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 font-black text-white text-sm shadow-lg">ترجمة فورية دقيقة 🌐</button>
+            <button type="button" onclick="runSmartTool('translator')" id="translatorBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 font-black text-white text-sm">ترجمة أكاديمية فورية 🌐</button>
         </div>
         <div id="translatorResultBox" class="hidden glass-panel rounded-3xl p-6 prose-print-box">
             <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4 no-print">
@@ -575,7 +600,9 @@ HTML_TEMPLATE = r"""
             const apiKey = localStorage.getItem('gemini_api_key');
             if (!text && !ncmBase64) return alert('يرجى رفع ملف الدرس أو لصق محتواه.');
             const btn = document.getElementById('ncmGenBtn');
-            btn.disabled = true; btn.innerText = '⏳ جاري التوليد...';
+            const origHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span>⏳ جاري تصميم الخطاطة...</span>';
             try {
                 const res = await fetch('/generate_ncm', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -595,7 +622,7 @@ HTML_TEMPLATE = r"""
                 if (data.error) { alert(data.error); if (data.need_key) toggleApiModal(); }
                 else { renderNCMSheet(data.result, ncmNum); }
             } catch(e) { alert('خطأ في الاتصال.'); }
-            finally { btn.disabled = false; btn.innerText = 'توليد الخطاطة الرسمية بالترويسة الكاملة ⚡'; }
+            finally { btn.disabled = false; btn.innerHTML = origHtml; }
         }
 
         const stationColors = ['#2563eb', '#dc2626', '#d97706', '#16a34a', '#7c3aed', '#0d9488'];
@@ -696,6 +723,7 @@ HTML_TEMPLATE = r"""
             const apiKey = localStorage.getItem('gemini_api_key');
             if (!text && !fileObj.b64) return alert('يرجى إدخال النص أو رفع ملف أولاً.');
             const btn = document.getElementById(toolType + 'Btn');
+            const origText = btn.innerText;
             btn.disabled = true; btn.innerText = '⏳ جاري المعالجة...';
 
             let extraOptions = {};
@@ -720,7 +748,7 @@ HTML_TEMPLATE = r"""
                     document.getElementById(toolType + 'ResultBox').scrollIntoView({ behavior: 'smooth' });
                 }
             } catch(e) { alert('خطأ في الاتصال.'); }
-            finally { btn.disabled = false; btn.innerText = 'تنفيذ العملية 🚀'; }
+            finally { btn.disabled = false; btn.innerText = origText; }
         }
 
         function copyText(elId) {
