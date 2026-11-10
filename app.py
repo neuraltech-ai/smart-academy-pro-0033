@@ -8,32 +8,22 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 app = Flask(__name__)
-
 AVAILABLE_MODELS_CACHE = {}
 
 def get_available_models(api_key):
     if api_key in AVAILABLE_MODELS_CACHE and AVAILABLE_MODELS_CACHE[api_key]:
         return AVAILABLE_MODELS_CACHE[api_key]
     try:
-        r = requests.get(
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            headers={"x-goog-api-key": api_key},
-            timeout=8
-        )
+        r = requests.get("https://generativelanguage.googleapis.com/v1beta/models", headers={"x-goog-api-key": api_key}, timeout=8)
         if r.status_code == 200:
             models = r.json().get('models', [])
-            valid = [
-                m['name'].replace('models/', '') for m in models
-                if 'generateContent' in m.get('supportedGenerationMethods', [])
-            ]
+            valid = [m['name'].replace('models/', '') for m in models if 'generateContent' in m.get('supportedGenerationMethods', [])]
             prioritized = []
             for keyword in ['3.8-flash', 'flash-lite', '3.5-flash', '3.0-flash', '2.0-flash', 'flash', 'pro']:
                 for v in valid:
-                    if keyword in v and v not in prioritized and '2.5' not in v and '1.5' not in v:
-                        prioritized.append(v)
+                    if keyword in v and v not in prioritized and '2.5' not in v and '1.5' not in v: prioritized.append(v)
             for v in valid:
-                if v not in prioritized and '2.5' not in v and '1.5' not in v:
-                    prioritized.append(v)
+                if v not in prioritized and '2.5' not in v and '1.5' not in v: prioritized.append(v)
             if prioritized:
                 AVAILABLE_MODELS_CACHE[api_key] = prioritized
                 return prioritized
@@ -48,19 +38,16 @@ def extract_pptx_text(file_stream):
             slide_files = [f for f in z.namelist() if f.startswith('ppt/slides/slide') and f.endswith('.xml')]
             slide_files.sort(key=lambda x: int(re.search(r'slide(\d+)\.xml', x).group(1)) if re.search(r'slide(\d+)\.xml', x) else 0)
             for idx, slide in enumerate(slide_files, 1):
-                xml_content = z.read(slide)
-                tree = ET.fromstring(xml_content)
+                tree = ET.fromstring(z.read(slide))
                 slide_texts = [elem.text.strip() for elem in tree.iter() if elem.tag.endswith('}t') and elem.text and elem.text.strip()]
-                if slide_texts:
-                    text_runs.append(f"[Slide {idx}]: " + " | ".join(slide_texts))
+                if slide_texts: text_runs.append(f"[Slide {idx}]: " + " | ".join(slide_texts))
     except Exception as e:
-        return f"Error reading PPTX: {str(e)}"
+        return f"Error: {str(e)}"
     return "\n".join(text_runs)
 
 def parse_filename_metadata(filename):
     meta = {}
-    if not filename:
-        return meta
+    if not filename: return meta
     fn = filename.upper()
     lvl = re.search(r'(?:N|NIVEAU|AEP)[_-]?(\d)', fn) or re.search(r'(\d)AEP', fn)
     per = re.search(r'P(\d)', fn)
@@ -86,18 +73,15 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.15):
     for attempt in range(2):
         for model_name in candidate_models:
             try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-                res = requests.post(url, json=payload, headers=headers, timeout=60)
+                res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent", json=payload, headers=headers, timeout=60)
                 res_data = res.json()
                 if res.status_code == 200 and 'candidates' in res_data:
                     return res_data['candidates'][0]['content']['parts'][0]['text'], None
                 else:
                     last_error = res_data.get('error', {}).get('message', 'خطأ')
                     time.sleep(0.5)
-                    continue
             except Exception as e:
                 last_error = str(e)
-                continue
     return None, last_error
 
 HTML_TEMPLATE = """
@@ -122,9 +106,8 @@ HTML_TEMPLATE = """
         .glass-panel { background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.1); }
         .app-section { display: none; }
         .app-section.active-section { display: block; }
-        .nav-card { cursor: pointer; transition: all 0.2s ease; }
-        .nav-card:hover { transform: translateY(-2px); }
-        .nav-card.active { border-color: #38bdf8 !important; background: rgba(56, 189, 248, 0.15) !important; }
+        .nav-card { cursor: pointer; transition: all 0.15s ease; -webkit-tap-highlight-color: transparent; }
+        .nav-card.active { border-color: #38bdf8 !important; background: rgba(56, 189, 248, 0.2) !important; box-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
 
         .sheet-scroll-viewport { width: 100%; overflow-x: auto; padding-bottom: 12px; display: flex; justify-content: center; }
         .ncm-sheet { background: #ffffff; color: #0f172a; border-radius: 14px; padding: 18px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.55); width: 1120px; min-width: 1120px; max-width: 1120px; margin: 0 auto; position: relative; border: 1px solid #cbd5e1; box-sizing: border-box; }
@@ -167,7 +150,6 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body class="p-3 md:p-6">
-    <!-- لوحة التنقل الرئيسية الواضحة والمريحة باللمس -->
     <div class="max-w-6xl mx-auto no-print mb-6">
         <header class="glass-panel p-4 rounded-3xl shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
             <div class="flex items-center gap-3">
@@ -176,29 +158,29 @@ HTML_TEMPLATE = """
                 </div>
                 <div>
                     <h1 class="text-lg font-black text-white">المنصة التعليمية الذكية <span class="text-cyan-400">Pro</span></h1>
-                    <p class="text-xs text-slate-400">اختر القسم المطلوب أدناه للاستخدام الفوري</p>
+                    <p class="text-xs text-slate-400">اضغط على أي قسم أدناه للانتقال إليه فوراً</p>
                 </div>
             </div>
-            <button onclick="toggleApiModal()" class="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 flex items-center gap-1.5">
+            <button type="button" onclick="toggleApiModal()" class="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-slate-300 flex items-center gap-1.5">
                 <span>⚙️</span> إعداد مفتاح API
             </button>
         </header>
 
-        <!-- بطاقات التنقل الكبيرة والبارزة (تستجيب 100% باللمس) -->
+        <!-- بطاقات التنقل (تستخدم حدث السحب واللمس المباشر onclick) -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-            <div onclick="switchSection('ncm', this)" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-800/90 border-2 border-cyan-500 shadow-md flex flex-col items-center text-center gap-1">
+            <div onclick="switchSection('ncm')" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-800/90 border-2 border-cyan-500 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🗺️</span>
                 <span class="text-xs font-black text-white">خطاطات الرائدة (NCM)</span>
             </div>
-            <div onclick="switchSection('solver', this)" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+            <div onclick="switchSection('solver')" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🧮</span>
                 <span class="text-xs font-black text-slate-200">حلّال المسائل المعقدة</span>
             </div>
-            <div onclick="switchSection('summarizer', this)" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+            <div onclick="switchSection('summarizer')" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">📑</span>
                 <span class="text-xs font-black text-slate-200">الملخص الذكي للملفات</span>
             </div>
-            <div onclick="switchSection('translator', this)" id="card-translator" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+            <div onclick="switchSection('translator')" id="card-translator" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🌐</span>
                 <span class="text-xs font-black text-slate-200">المترجم الأكاديمي</span>
             </div>
@@ -209,14 +191,14 @@ HTML_TEMPLATE = """
                 <h3 class="text-base font-bold mb-2 text-cyan-400">إعداد مفتاح الخدمة السحابية</h3>
                 <input type="password" id="apiKeyInput" placeholder="أدخل المفتاح هنا..." class="w-full p-3 rounded-xl bg-slate-900 border border-slate-700 text-white mb-4 text-left font-mono text-sm" dir="ltr">
                 <div class="flex justify-end gap-2">
-                    <button onclick="toggleApiModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold">إغلاق</button>
-                    <button onclick="saveApiKey()" class="px-5 py-2 rounded-xl bg-blue-600 text-white font-black text-xs">حفظ</button>
+                    <button type="button" onclick="toggleApiModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold">إغلاق</button>
+                    <button type="button" onclick="saveApiKey()" class="px-5 py-2 rounded-xl bg-blue-600 text-white font-black text-xs">حفظ</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- ==================== القسم 1: الخطاطات ==================== -->
+    <!-- القسم 1 -->
     <div id="sec-ncm" class="app-section active-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-5 shadow-2xl mb-6 no-print">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
@@ -297,7 +279,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- ==================== القسم 2: حل المسائل ==================== -->
+    <!-- القسم 2 -->
     <div id="sec-solver" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-cyan-400 mb-1">🧮 حلّال المسائل والتمارين (بنفس لغة التمرين)</h2>
@@ -347,7 +329,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- ==================== القسم 3: الملخص الذكي ==================== -->
+    <!-- القسم 3 -->
     <div id="sec-summarizer" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-amber-400 mb-1">📑 الملخص الذكي للملفات والدروس</h2>
@@ -385,7 +367,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- ==================== القسم 4: الترجمة ==================== -->
+    <!-- القسم 4 -->
     <div id="sec-translator" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-emerald-400 mb-1">🌐 المترجم الأكاديمي والتربوي الدقيق</h2>
@@ -454,11 +436,11 @@ HTML_TEMPLATE = """
             }
         }
 
-        function switchSection(secId, btn) {
+        function switchSection(secId) {
             document.querySelectorAll('.app-section').forEach(el => el.classList.remove('active-section'));
             document.getElementById('sec-' + secId).classList.add('active-section');
             document.querySelectorAll('.nav-card').forEach(b => b.classList.remove('active', 'border-cyan-500'));
-            const card = document.getElementById('card-id-' + secId) || document.getElementById('card-' + secId);
+            const card = document.getElementById('card-' + secId);
             if (card) {
                 card.classList.add('active', 'border-cyan-500');
             }
@@ -782,13 +764,13 @@ def smart_tool():
     tool = data.get('tool'); text = data.get('text', ''); options = data.get('options') or {}
     file_b64 = data.get('file_b64'); mime_type = data.get('mime_type')
     api_key = (data.get('api_key') or os.environ.get('GEMINI_API_KEY') or '').strip()
-    if not api_key: return jsonify({'error': 'أدخل مفتاح API.', 'need_key': True})
+    if not api_key: return jsonify({'error': 'أدخل مفتاح API.', 'need_key':True})
 
     lang_opt = options.get('lang', 'auto')
-    if lang_opt == 'fr': lang_rule = "MANDATORY: Answer 100% in FRENCH. ZERO Arabic words."
+    if lang_opt == 'fr': lang_rule = "MANDATORY: Answer 100% inRENCH. ZERO Arabic words."
     elif lang_opt == 'ar': lang_rule = "MANDATORY: Answer 100% in ARABIC."
     elif lang_opt == 'en': lang_rule = "MANDATORY: Answer 100% in ENGLISH."
-    else: lang_rule = "Mirror the exact language of the input document/file (French input -> French output, Arabic input -> Arabic output)."
+    else: lang_rule = "Mirror the exact language of the input document/file."
 
     prompt = f"You are an expert AI academic assistant. {lang_rule}\nSolve/Process the input thoroughly with professional formatting and LaTeX math ($...$ or $$...$$)."
     parts = [{"text": prompt + "\n\nInput:\n" + (text[:35000] if text else "Process the attached file.")}]
@@ -798,6 +780,6 @@ def smart_tool():
     if err or not raw_text: return jsonify({'error': f'خطأ: {err}'})
     return jsonify({'result': raw_text})
 
-if __name__ == '__main__':
+if __name__ == 'main':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
