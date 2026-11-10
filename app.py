@@ -10,26 +10,39 @@ import xml.etree.ElementTree as ET
 app = Flask(__name__)
 AVAILABLE_MODELS_CACHE = {}
 
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "healthy", "alive": True}), 200
+
 def get_available_models(api_key):
     if api_key in AVAILABLE_MODELS_CACHE and AVAILABLE_MODELS_CACHE[api_key]:
         return AVAILABLE_MODELS_CACHE[api_key]
     try:
-        r = requests.get("https://generativelanguage.googleapis.com/v1beta/models", headers={"x-goog-api-key": api_key}, timeout=8)
+        r = requests.get(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            headers={"x-goog-api-key": api_key},
+            timeout=8
+        )
         if r.status_code == 200:
             models = r.json().get('models', [])
-            valid = [m['name'].replace('models/', '') for m in models if 'generateContent' in m.get('supportedGenerationMethods', [])]
+            valid = [
+                m['name'].replace('models/', '') for m in models
+                if 'generateContent' in m.get('supportedGenerationMethods', [])
+            ]
             prioritized = []
             for keyword in ['3.8-flash', 'flash-lite', '3.5-flash', '3.0-flash', '2.0-flash', 'flash', 'pro']:
                 for v in valid:
-                    if keyword in v and v not in prioritized and '2.5' not in v and '1.5' not in v: prioritized.append(v)
+                    if keyword in v and v not in prioritized and '2.5' not in v and '1.5' not in v:
+                        prioritized.append(v)
             for v in valid:
-                if v not in prioritized and '2.5' not in v and '1.5' not in v: prioritized.append(v)
+                if v not in prioritized and '2.5' not in v and '1.5' not in v:
+                    prioritized.append(v)
             if prioritized:
                 AVAILABLE_MODELS_CACHE[api_key] = prioritized
                 return prioritized
     except Exception:
         pass
-    return ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.8-pro"]
+    return ["gemini-2.0-flash", "gemini-3.8-flash", "gemini-pro"]
 
 def extract_pptx_text(file_stream):
     text_runs = []
@@ -40,14 +53,16 @@ def extract_pptx_text(file_stream):
             for idx, slide in enumerate(slide_files, 1):
                 tree = ET.fromstring(z.read(slide))
                 slide_texts = [elem.text.strip() for elem in tree.iter() if elem.tag.endswith('}t') and elem.text and elem.text.strip()]
-                if slide_texts: text_runs.append(f"[Slide {idx}]: " + " | ".join(slide_texts))
+                if slide_texts:
+                    text_runs.append(f"[Slide {idx}]: " + " | ".join(slide_texts))
     except Exception as e:
         return f"Error: {str(e)}"
     return "\n".join(text_runs)
 
 def parse_filename_metadata(filename):
     meta = {}
-    if not filename: return meta
+    if not filename:
+        return meta
     fn = filename.upper()
     lvl = re.search(r'(?:N|NIVEAU|AEP)[_-]?(\d)', fn) or re.search(r'(\d)AEP', fn)
     per = re.search(r'P(\d)', fn)
@@ -66,25 +81,31 @@ def parse_filename_metadata(filename):
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.15):
     candidate_models = get_available_models(api_key)
     gen_config = {"temperature": temperature}
-    if json_mode: gen_config["responseMimeType"] = "application/json"
+    if json_mode:
+        gen_config["responseMimeType"] = "application/json"
     payload = {"contents": [{"parts": parts}], "generationConfig": gen_config}
     headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
     last_error = ""
     for attempt in range(2):
         for model_name in candidate_models:
             try:
-                res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent", json=payload, headers=headers, timeout=60)
+                res = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
+                    json=payload,
+                    headers=headers,
+                    timeout=60
+                )
                 res_data = res.json()
                 if res.status_code == 200 and 'candidates' in res_data:
                     return res_data['candidates'][0]['content']['parts'][0]['text'], None
                 else:
-                    last_error = res_data.get('error', {}).get('message', 'خطأ')
+                    last_error = res_data.get('error', {}).get('message', 'خطأ في الاستجابة')
                     time.sleep(0.5)
             except Exception as e:
                 last_error = str(e)
     return None, last_error
 
-HTML_TEMPLATE = """
+HTML_TEMPLATE = r"""
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -95,7 +116,7 @@ HTML_TEMPLATE = """
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         window.MathJax = {
-            tex: { inlineMath: [['$', '$'], ['\\\\(', '\\\\)']], displayMath: [['$$', '$$'], ['\\\\[', '\\\\]']], processEscapes: true },
+            tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']], processEscapes: true },
             options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
         };
     </script>
@@ -106,8 +127,9 @@ HTML_TEMPLATE = """
         .glass-panel { background: rgba(30, 41, 59, 0.95); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.1); }
         .app-section { display: none; }
         .app-section.active-section { display: block; }
-        .nav-card { cursor: pointer; transition: all 0.15s ease; -webkit-tap-highlight-color: transparent; }
-        .nav-card.active { border-color: #38bdf8 !important; background: rgba(56, 189, 248, 0.2) !important; box-shadow: 0 0 15px rgba(56, 189, 248, 0.3); }
+        .nav-card, .st-btn { cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; transition: all 0.15s ease; }
+        .nav-card.active { border-color: #38bdf8 !important; background: rgba(56, 189, 248, 0.22) !important; box-shadow: 0 0 15px rgba(56, 189, 248, 0.35); }
+        .st-btn.active-st { border-color: #06b6d4 !important; background: rgba(6, 182, 212, 0.25) !important; color: #67e8f9 !important; }
 
         .sheet-scroll-viewport { width: 100%; overflow-x: auto; padding-bottom: 12px; display: flex; justify-content: center; }
         .ncm-sheet { background: #ffffff; color: #0f172a; border-radius: 14px; padding: 18px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.55); width: 1120px; min-width: 1120px; max-width: 1120px; margin: 0 auto; position: relative; border: 1px solid #cbd5e1; box-sizing: border-box; }
@@ -166,24 +188,23 @@ HTML_TEMPLATE = """
             </button>
         </header>
 
-        <!-- بطاقات التنقل (تستخدم حدث السحب واللمس المباشر onclick) -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-            <div onclick="switchSection('ncm')" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-800/90 border-2 border-cyan-500 shadow-md flex flex-col items-center text-center gap-1">
+            <button type="button" onclick="switchSection('ncm')" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-800/90 border-2 border-cyan-500 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🗺️</span>
                 <span class="text-xs font-black text-white">خطاطات الرائدة (NCM)</span>
-            </div>
-            <div onclick="switchSection('solver')" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+            </button>
+            <button type="button" onclick="switchSection('solver')" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🧮</span>
                 <span class="text-xs font-black text-slate-200">حلّال المسائل المعقدة</span>
-            </div>
-            <div onclick="switchSection('summarizer')" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+            </button>
+            <button type="button" onclick="switchSection('summarizer')" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">📑</span>
                 <span class="text-xs font-black text-slate-200">الملخص الذكي للملفات</span>
-            </div>
-            <div onclick="switchSection('translator')" id="card-translator" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+            </button>
+            <button type="button" onclick="switchSection('translator')" id="card-translator" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🌐</span>
                 <span class="text-xs font-black text-slate-200">المترجم الأكاديمي</span>
-            </div>
+            </button>
         </div>
 
         <div id="apiModal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
@@ -198,7 +219,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- القسم 1 -->
+    <!-- القسم 1: الخطاطات -->
     <div id="sec-ncm" class="app-section active-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-5 shadow-2xl mb-6 no-print">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
@@ -219,11 +240,11 @@ HTML_TEMPLATE = """
                     <div>
                         <label class="block text-xs font-bold text-cyan-400 mb-2">2. عدد المحطات:</label>
                         <div class="grid grid-cols-5 gap-1.5 mb-3">
-                            <button type="button" onclick="setStations(2, this)" class="st-btn py-1.5 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs">2</button>
-                            <button type="button" onclick="setStations(3, this)" class="st-btn py-1.5 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs">3</button>
-                            <button type="button" onclick="setStations(4, this)" class="st-btn py-1.5 rounded-xl border border-cyan-500 bg-cyan-500/20 text-cyan-300 font-black text-xs">4</button>
-                            <button type="button" onclick="setStations(5, this)" class="st-btn py-1.5 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs">5</button>
-                            <button type="button" onclick="setStations(6, this)" class="st-btn py-1.5 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs">6</button>
+                            <button type="button" onclick="setStations(2)" id="st-btn-2" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">2</button>
+                            <button type="button" onclick="setStations(3)" id="st-btn-3" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">3</button>
+                            <button type="button" onclick="setStations(4)" id="st-btn-4" class="st-btn active-st py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">4</button>
+                            <button type="button" onclick="setStations(5)" id="st-btn-5" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">5</button>
+                            <button type="button" onclick="setStations(6)" id="st-btn-6" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">6</button>
                         </div>
                         <div class="grid grid-cols-3 gap-1.5 mb-2">
                             <input id="metaLevel" type="text" placeholder="المستوى" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-center text-[11px] text-white">
@@ -245,7 +266,7 @@ HTML_TEMPLATE = """
         </div>
 
         <div id="printBar" class="hidden mb-3 flex flex-wrap items-center justify-between gap-2 glass-panel px-4 py-2.5 rounded-2xl no-print">
-            <span class="text-xs font-bold text-emerald-400">✅ الخطاطة جاهزة (قابل للتعديل باللمس)</span>
+            <span class="text-xs font-bold text-emerald-400">✅ الخطاطة جاهزة (قابلة للتعديل باللمس)</span>
             <button type="button" onclick="window.print()" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / PDF</button>
         </div>
 
@@ -279,7 +300,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- القسم 2 -->
+    <!-- القسم 2: حل المسائل -->
     <div id="sec-solver" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-cyan-400 mb-1">🧮 حلّال المسائل والتمارين (بنفس لغة التمرين)</h2>
@@ -329,7 +350,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- القسم 3 -->
+    <!-- القسم 3: الملخص الذكي -->
     <div id="sec-summarizer" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-amber-400 mb-1">📑 الملخص الذكي للملفات والدروس</h2>
@@ -367,7 +388,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- القسم 4 -->
+    <!-- القسم 4: الترجمة -->
     <div id="sec-translator" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-emerald-400 mb-1">🌐 المترجم الأكاديمي والتربوي الدقيق</h2>
@@ -409,7 +430,38 @@ HTML_TEMPLATE = """
         let ncmBase64 = null, ncmMime = null, ncmUploadedFilename = '';
         let toolFiles = { solver: {}, summarizer: {}, translator: {} };
 
-        document.getElementById('apiKeyInput').value = localStorage.getItem('gemini_api_key') || '';
+        const savedKey = localStorage.getItem('gemini_api_key') || '';
+        const apiKeyField = document.getElementById('apiKeyInput');
+        if (apiKeyField) apiKeyField.value = savedKey;
+
+        function switchSection(secId) {
+            document.querySelectorAll('.app-section').forEach(el => el.classList.remove('active-section'));
+            const targetSec = document.getElementById('sec-' + secId);
+            if (targetSec) targetSec.classList.add('active-section');
+
+            document.querySelectorAll('.nav-card').forEach(b => b.classList.remove('active', 'border-cyan-500'));
+            const activeCard = document.getElementById('card-' + secId);
+            if (activeCard) activeCard.classList.add('active', 'border-cyan-500');
+
+            if (secId === 'ncm') setTimeout(drawConnectors, 60);
+        }
+
+        function setStations(num) {
+            stationsCount = parseInt(num, 10);
+            document.querySelectorAll('.st-btn').forEach(b => b.classList.remove('active-st'));
+            const activeBtn = document.getElementById('st-btn-' + num);
+            if (activeBtn) activeBtn.classList.add('active-st');
+        }
+
+        function toggleApiModal() {
+            document.getElementById('apiModal').classList.toggle('hidden');
+        }
+
+        function saveApiKey() {
+            localStorage.setItem('gemini_api_key', document.getElementById('apiKeyInput').value.trim());
+            toggleApiModal();
+            alert('تم حفظ المفتاح بنجاح!');
+        }
 
         function renderFormattedOutput(elementId, rawMarkdown) {
             const el = document.getElementById(elementId);
@@ -419,46 +471,18 @@ HTML_TEMPLATE = """
                 .replace(/\$\$[\s\S]*?\$\$/g, match => { mathBlocks.push(match); return `@@MATH_BLOCK_${mathBlocks.length - 1}@@`; })
                 .replace(/\\\[[\s\S]*?\\\]/g, match => { mathBlocks.push(match); return `@@MATH_BLOCK_${mathBlocks.length - 1}@@`; })
                 .replace(/\\\([\s\S]*?\\\)/g, match => { mathBlocks.push(match); return `@@MATH_BLOCK_${mathBlocks.length - 1}@@`; })
-                .replace(/\$([^\$\n]+?)\$/g, match => { mathBlocks.push(match); return `@@MATH_BLOCK_${mathBlocks.length - 1}@@`; });
+                .replace(/\$([^\$\r\n]+?)\$/g, match => { mathBlocks.push(match); return `@@MATH_BLOCK_${mathBlocks.length - 1}@@`; });
 
-            let html = marked.parse(protectedText);
+            let html = (typeof marked !== 'undefined') ? marked.parse(protectedText) : protectedText;
             html = html.replace(/@@MATH_BLOCK_(\d+)@@/g, (_, idx) => mathBlocks[parseInt(idx, 10)]);
 
-            const textWithoutMath = rawMarkdown.replace(/\$\$[\s\S]*?\$\$|\$[^\$\n]+?\$/g, '');
-            const arabicChars = (textWithoutMath.match(/[\u0600-\u06FF]/g) || []).length;
-            const latinChars = (textWithoutMath.match(/[a-zA-ZéèêëàâîïôùûçÉÈÊËÀÂÎÏÔÙÛÇ]/g) || []).length;
-            const isRtl = arabicChars > latinChars;
-
-            el.setAttribute('dir', isRtl ? 'rtl' : 'ltr');
+            const arabicChars = (rawMarkdown.match(/[\u0600-\u06FF]/g) || []).length;
+            const latinChars = (rawMarkdown.match(/[a-zA-Z]/g) || []).length;
+            el.setAttribute('dir', arabicChars >= latinChars ? 'rtl' : 'ltr');
             el.innerHTML = html;
             if (window.MathJax && window.MathJax.typesetPromise) {
                 window.MathJax.typesetPromise([el]).catch(() => {});
             }
-        }
-
-        function switchSection(secId) {
-            document.querySelectorAll('.app-section').forEach(el => el.classList.remove('active-section'));
-            document.getElementById('sec-' + secId).classList.add('active-section');
-            document.querySelectorAll('.nav-card').forEach(b => b.classList.remove('active', 'border-cyan-500'));
-            const card = document.getElementById('card-' + secId);
-            if (card) {
-                card.classList.add('active', 'border-cyan-500');
-            }
-            if (secId === 'ncm') setTimeout(drawConnectors, 60);
-        }
-
-        function toggleApiModal() { document.getElementById('apiModal').classList.toggle('hidden'); }
-        function saveApiKey() {
-            localStorage.setItem('gemini_api_key', document.getElementById('apiKeyInput').value.trim());
-            toggleApiModal();
-            alert('تم الحفظ!');
-        }
-        function setStations(num, btn) {
-            stationsCount = parseInt(num, 10);
-            document.querySelectorAll('.st-btn').forEach(b => {
-                b.className = "st-btn py-1.5 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs";
-            });
-            btn.className = "st-btn py-1.5 rounded-xl border border-cyan-500 bg-cyan-500/20 text-cyan-300 font-black text-xs";
         }
 
         function compressImageFile(file, callback) {
@@ -486,7 +510,7 @@ HTML_TEMPLATE = """
             const file = input.files[0];
             if (!file) return;
             ncmUploadedFilename = file.name;
-            document.getElementById('ncmFileName').innerText = "⏳ جاري التحليل: " + file.name;
+            document.getElementById('ncmFileName').innerText = "⏳ تم اختيار: " + file.name;
             document.getElementById('ncmClearBtn').classList.remove('hidden');
             if (file.name.toLowerCase().endsWith('.pptx')) {
                 const fd = new FormData(); fd.append('file', file);
@@ -507,6 +531,7 @@ HTML_TEMPLATE = """
                 reader.readAsText(file);
             }
         }
+
         function clearNcmFile() {
             document.getElementById('ncmFileInput').value = '';
             document.getElementById('ncmFileName').innerText = 'اختر ملف (.pptx / .pdf / صورة)';
@@ -517,7 +542,7 @@ HTML_TEMPLATE = """
         async function handleToolFile(input, toolKey) {
             const file = input.files[0];
             if (!file) return;
-            document.getElementById(toolKey + 'FileName').innerText = "⏳ جاري القراءة: " + file.name;
+            document.getElementById(toolKey + 'FileName').innerText = "⏳ تم اختيار: " + file.name;
             document.getElementById(toolKey + 'ClearBtn').classList.remove('hidden');
             if (file.name.toLowerCase().endsWith('.pptx')) {
                 const fd = new FormData(); fd.append('file', file);
@@ -536,6 +561,7 @@ HTML_TEMPLATE = """
                 reader.readAsText(file);
             }
         }
+
         function clearToolFile(toolKey) {
             document.getElementById(toolKey + 'FileInput').value = '';
             toolFiles[toolKey] = {};
@@ -553,7 +579,17 @@ HTML_TEMPLATE = """
             try {
                 const res = await fetch('/generate_ncm', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ text, filename: ncmUploadedFilename, stations: stationsCount, ncm_num: ncmNum, meta_overrides: { level: document.getElementById('metaLevel').value.trim(), periode: document.getElementById('metaPeriode').value.trim(), unite: document.getElementById('metaUnite').value.trim(), semaine: document.getElementById('metaSemaine').value.trim(), seance: document.getElementById('metaSeance').value.trim() }, file_b64: ncmBase64, mime_type: ncmMime, api_key: apiKey })
+                    body: JSON.stringify({
+                        text, filename: ncmUploadedFilename, stations: stationsCount, ncm_num: ncmNum,
+                        meta_overrides: {
+                            level: document.getElementById('metaLevel').value.trim(),
+                            periode: document.getElementById('metaPeriode').value.trim(),
+                            unite: document.getElementById('metaUnite').value.trim(),
+                            semaine: document.getElementById('metaSemaine').value.trim(),
+                            seance: document.getElementById('metaSeance').value.trim()
+                        },
+                        file_b64: ncmBase64, mime_type: ncmMime, api_key: apiKey
+                    })
                 });
                 const data = await res.json();
                 if (data.error) { alert(data.error); if (data.need_key) toggleApiModal(); }
@@ -703,7 +739,8 @@ def index():
 
 @app.route('/extract_pptx', methods=['POST'])
 def handle_pptx():
-    if 'file' not in request.files: return jsonify({'error': 'لم يتم إرفاق ملف'})
+    if 'file' not in request.files:
+        return jsonify({'error': 'لم يتم إرفاق ملف'})
     return jsonify({'text': extract_pptx_text(request.files['file'].stream)})
 
 @app.route('/generate_ncm', methods=['POST'])
@@ -718,7 +755,8 @@ def generate_ncm():
     mime_type = data.get('mime_type')
     api_key = (data.get('api_key') or os.environ.get('GEMINI_API_KEY') or '').strip()
 
-    if not api_key: return jsonify({'error': 'يرجى إدخال مفتاح API من (⚙️).', 'need_key': True})
+    if not api_key:
+        return jsonify({'error': 'يرجى إدخال مفتاح API من (⚙️).', 'need_key': True})
 
     fn_meta = parse_filename_metadata(filename)
     lvl = overrides.get('level') or fn_meta.get('level') or ''
@@ -747,13 +785,16 @@ lesson_subtitle: "برنامج التعليم الصريح | [عنوان الد�
 {{"lang":"ar","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"اللغة العربية {lvl or '2'}","unit_week":"المرحلة {per or '2'} – الوحدة {uni or '1'} | الأسبوع {sem or '2'}","seance_ncm_badge":"الحصة {sea or '4'} (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
 
     parts = [{"text": system_prompt + "\n\nContent:\n" + (text[:35000] if text else "Analyze attached file.")}]
-    if file_b64 and mime_type: parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
+    if file_b64 and mime_type:
+        parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
     raw_text, err = call_gemini_api(api_key, parts, json_mode=True, temperature=0.1)
-    if err or not raw_text: return jsonify({'error': f'تعذر التوليد: {err}'})
+    if err or not raw_text:
+        return jsonify({'error': f'تعذر التوليد: {err}'})
     try:
         res_json = json.loads(re.search(r'\{[\s\S]*\}', raw_text).group(0))
-        if 'stations' in res_json: res_json['stations'] = res_json['stations'][:stations]
+        if 'stations' in res_json:
+            res_json['stations'] = res_json['stations'][:stations]
         return jsonify({'result': res_json})
     except Exception as e:
         return jsonify({'error': str(e)})
@@ -761,25 +802,42 @@ lesson_subtitle: "برنامج التعليم الصريح | [عنوان الد�
 @app.route('/smart_tool', methods=['POST'])
 def smart_tool():
     data = request.get_json(force=True)
-    tool = data.get('tool'); text = data.get('text', ''); options = data.get('options') or {}
-    file_b64 = data.get('file_b64'); mime_type = data.get('mime_type')
+    tool = data.get('tool')
+    text = data.get('text', '')
+    options = data.get('options') or {}
+    file_b64 = data.get('file_b64')
+    mime_type = data.get('mime_type')
     api_key = (data.get('api_key') or os.environ.get('GEMINI_API_KEY') or '').strip()
-    if not api_key: return jsonify({'error': 'أدخل مفتاح API.', 'need_key':True})
+    if not api_key:
+        return jsonify({'error': 'أدخل مفتاح API.', 'need_key': True})
 
     lang_opt = options.get('lang', 'auto')
-    if lang_opt == 'fr': lang_rule = "MANDATORY: Answer 100% inRENCH. ZERO Arabic words."
-    elif lang_opt == 'ar': lang_rule = "MANDATORY: Answer 100% in ARABIC."
-    elif lang_opt == 'en': lang_rule = "MANDATORY: Answer 100% in ENGLISH."
-    else: lang_rule = "Mirror the exact language of the input document/file."
+    if lang_opt == 'fr':
+        lang_rule = "MANDATORY: Answer 100% in FRENCH. ZERO Arabic words."
+    elif lang_opt == 'ar':
+        lang_rule = "MANDATORY: Answer 100% in ARABIC."
+    elif lang_opt == 'en':
+        lang_rule = "MANDATORY: Answer 100% in ENGLISH."
+    else:
+        lang_rule = "Mirror the exact language of the input document/file."
 
-    prompt = f"You are an expert AI academic assistant. {lang_rule}\nSolve/Process the input thoroughly with professional formatting and LaTeX math ($...$ or $$...$$)."
+    if tool == 'translator':
+        target_lang = options.get('target', 'French')
+        prompt = f"You are an expert academic translator. Translate the following content accurately into {target_lang}, preserving all scientific formatting and LaTeX math ($...$ or $$...$$)."
+    elif tool == 'summarizer':
+        prompt = f"You are an expert academic summarizer. {lang_rule}\nCreate a well-structured, comprehensive summary with clear headings and bullet points."
+    else:
+        prompt = f"You are an expert AI academic problem solver. {lang_rule}\nSolve the input step-by-step with professional formatting and LaTeX math ($...$ or $$...$$)."
+
     parts = [{"text": prompt + "\n\nInput:\n" + (text[:35000] if text else "Process the attached file.")}]
-    if file_b64 and mime_type: parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
+    if file_b64 and mime_type:
+        parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
     raw_text, err = call_gemini_api(api_key, parts, json_mode=False, temperature=0.15)
-    if err or not raw_text: return jsonify({'error': f'خطأ: {err}'})
+    if err or not raw_text:
+        return jsonify({'error': f'خطأ: {err}'})
     return jsonify({'result': raw_text})
 
-if __name__ == 'main':
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
