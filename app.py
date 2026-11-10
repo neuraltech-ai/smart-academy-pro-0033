@@ -166,23 +166,23 @@ HTML_TEMPLATE = """
             </button>
         </header>
 
-        <!-- بطاقات التنقل العلوية المحسنة -->
+        <!-- بطاقات التنقل (تستخدم حدث السحب واللمس المباشر onclick) -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
-            <div onclick="switchSection('ncm')" id="card-ncm" class="nav-card active p-3 rounded-2xl bg-slate-800/90 border-2 border-cyan-500 shadow-md flex flex-col items-center text-center gap-1">
-                <span class="text-xl">🗺️</span>
-                <span class="text-[11px] font-black text-white">خطاطات الرائدة (NCM)</span>
+            <div onclick="switchSection('ncm')" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-800/90 border-2 border-cyan-500 shadow-md flex flex-col items-center text-center gap-1">
+                <span class="text-2xl">🗺️</span>
+                <span class="text-xs font-black text-white">خطاطات الرائدة (NCM)</span>
             </div>
-            <div onclick="switchSection('solver')" id="card-solver" class="nav-card p-3 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
-                <span class="text-xl">🧮</span>
-                <span class="text-[11px] font-black text-slate-200">حلّال المسائل المعقدة</span>
+            <div onclick="switchSection('solver')" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+                <span class="text-2xl">🧮</span>
+                <span class="text-xs font-black text-slate-200">حلّال المسائل المعقدة</span>
             </div>
-            <div onclick="switchSection('summarizer')" id="card-summarizer" class="nav-card p-3 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
-                <span class="text-xl">📑</span>
-                <span class="text-[11px] font-black text-slate-200">الملخص الذكي للملفات</span>
+            <div onclick="switchSection('summarizer')" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+                <span class="text-2xl">📑</span>
+                <span class="text-xs font-black text-slate-200">الملخص الذكي للملفات</span>
             </div>
-            <div onclick="switchSection('translator')" id="card-translator" class="nav-card p-3 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
-                <span class="text-xl">🌐</span>
-                <span class="text-[11px] font-black text-slate-200">المترجم الأكاديمي</span>
+            <div onclick="switchSection('translator')" id="card-translator" class="nav-card p-3.5 rounded-2xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col items-center text-center gap-1">
+                <span class="text-2xl">🌐</span>
+                <span class="text-xs font-black text-slate-200">المترجم الأكاديمي</span>
             </div>
         </div>
 
@@ -198,7 +198,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- القسم 1: الخطاطات -->
+    <!-- القسم 1 -->
     <div id="sec-ncm" class="app-section active-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-5 shadow-2xl mb-6 no-print">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
@@ -279,7 +279,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- القسم 2: حل المسائل -->
+    <!-- القسم 2 -->
     <div id="sec-solver" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-cyan-400 mb-1">🧮 حلّال المسائل والتمارين (بنفس لغة التمرين)</h2>
@@ -329,7 +329,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- القسم 3: الملخص الذكي -->
+    <!-- القسم 3 -->
     <div id="sec-summarizer" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-amber-400 mb-1">📑 الملخص الذكي للملفات والدروس</h2>
@@ -367,7 +367,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <!-- القسم 4: الترجمة -->
+    <!-- القسم 4 -->
     <div id="sec-translator" class="app-section max-w-5xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <h2 class="text-base md:text-lg font-black text-emerald-400 mb-1">🌐 المترجم الأكاديمي والتربوي الدقيق</h2>
@@ -764,10 +764,10 @@ def smart_tool():
     tool = data.get('tool'); text = data.get('text', ''); options = data.get('options') or {}
     file_b64 = data.get('file_b64'); mime_type = data.get('mime_type')
     api_key = (data.get('api_key') or os.environ.get('GEMINI_API_KEY') or '').strip()
-    if not api_key: return jsonify({'error': 'أدخل مفتاح API.', 'need_key': True})
+    if not api_key: return jsonify({'error': 'أدخل مفتاح API.', 'need_key':True})
 
     lang_opt = options.get('lang', 'auto')
-    if lang_opt == 'fr': lang_rule = "MANDATORY: Answer 100% in FRENCH. ZERO Arabic words."
+    if lang_opt == 'fr': lang_rule = "MANDATORY: Answer 100% inRENCH. ZERO Arabic words."
     elif lang_opt == 'ar': lang_rule = "MANDATORY: Answer 100% in ARABIC."
     elif lang_opt == 'en': lang_rule = "MANDATORY: Answer 100% in ENGLISH."
     else: lang_rule = "Mirror the exact language of the input document/file."
@@ -780,6 +780,6 @@ def smart_tool():
     if err or not raw_text: return jsonify({'error': f'خطأ: {err}'})
     return jsonify({'result': raw_text})
 
-if __name__ == '__main__':
+if __name__ == 'main':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
