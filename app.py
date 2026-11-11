@@ -52,17 +52,16 @@ def get_available_models(api_key, high_rigor=False):
             ]
             prioritized = []
             if high_rigor:
-                # أولوية قصوى لنماذج الاستدلال العميق والرياضيات المتقدمة مع استبعاد lite
                 priority_keywords = ['2.5-pro', '3.1-pro', '3-pro', '2.5-flash', '3-flash', '2.0-flash', 'pro', 'flash']
                 for keyword in priority_keywords:
                     for v in valid:
                         if keyword in v and 'lite' not in v and v not in prioritized:
                             prioritized.append(v)
             else:
-                priority_keywords = ['2.5-flash', '3-flash', '2.0-flash', 'flash', 'pro']
+                priority_keywords = ['2.5-flash', '3-flash', '2.5-pro', '2.0-flash', 'flash', 'pro']
                 for keyword in priority_keywords:
                     for v in valid:
-                        if keyword in v and v not in prioritized:
+                        if keyword in v and 'lite' not in v and v not in prioritized:
                             prioritized.append(v)
             for v in valid:
                 if v not in prioritized:
@@ -78,13 +77,25 @@ def extract_pptx_text(file_stream):
     text_runs = []
     try:
         with zipfile.ZipFile(file_stream) as z:
-            slide_files = [f for f in z.namelist() if f.startswith('ppt/slides/slide') and f.endswith('.xml')]
+            namelist = z.namelist()
+            slide_files = [f for f in namelist if f.startswith('ppt/slides/slide') and f.endswith('.xml')]
             slide_files.sort(key=lambda x: int(re.search(r'slide(\d+)\.xml', x).group(1)) if re.search(r'slide(\d+)\.xml', x) else 0)
             for idx, slide in enumerate(slide_files, 1):
                 tree = ET.fromstring(z.read(slide))
                 slide_texts = [elem.text.strip() for elem in tree.iter() if elem.tag.endswith('}t') and elem.text and elem.text.strip()]
-                if slide_texts:
-                    text_runs.append(f"[Slide {idx}]: " + " | ".join(slide_texts))
+                note_file = f"ppt/notesSlides/notesSlide{idx}.xml"
+                note_texts = []
+                if note_file in namelist:
+                    try:
+                        ntree = ET.fromstring(z.read(note_file))
+                        note_texts = [elem.text.strip() for elem in ntree.iter() if elem.tag.endswith('}t') and elem.text and elem.text.strip()]
+                    except Exception:
+                        pass
+                combined = " | ".join(slide_texts)
+                if note_texts:
+                    combined += " [Notes: " + " | ".join(note_texts) + "]"
+                if combined.strip():
+                    text_runs.append(f"[Slide {idx}]: {combined}")
     except Exception as e:
         return f"Error: {str(e)}"
     return "\n".join(text_runs)
@@ -203,28 +214,131 @@ HTML_TEMPLATE = r"""
         .cta-btn:hover { filter: brightness(1.07); }
         .cta-btn:active { transform: scale(0.985); }
 
-        .sheet-scroll-viewport { width: 100%; overflow-x: auto; padding-bottom: 12px; display: flex; justify-content: center; }
-        .ncm-sheet { background: #ffffff; color: #0f172a; border-radius: 14px; padding: 18px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.55); width: 1120px; min-width: 1120px; max-width: 1120px; margin: 0 auto; position: relative; border: 1px solid #cbd5e1; box-sizing: border-box; }
-        .ncm-top-banner { background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%); color: white; border-radius: 12px; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; border-bottom: 4px solid #f59e0b; }
-        .ncm-orange-badge { background: linear-gradient(180deg, #f97316 0%, #ea580c 100%); color: white; border-radius: 10px; padding: 6px 16px; text-align: center; min-width: 95px; box-shadow: 0 3px 10px rgba(0,0,0,0.25); border: 1.5px solid rgba(255,255,255,0.4); flex-shrink: 0; }
-        .ncm-objectives-box { background: #f8fafc; border: 1.5px solid #cbd5e1; border-right: 6px solid #2563eb; border-radius: 10px; padding: 9px 16px; margin-bottom: 16px; font-size: 13.5px; line-height: 1.6; }
-        [dir="ltr"] .ncm-objectives-box { border-right: 1.5px solid #cbd5e1; border-left: 6px solid #2563eb; }
+        /* تصميم الخطاطة الرسمي المعتمد */
+        .sheet-scroll-viewport { width: 100%; overflow-x: auto; padding-bottom: 14px; display: flex; justify-content: center; }
+        .ncm-sheet {
+            background: #ffffff;
+            color: #0f172a;
+            border-radius: 16px;
+            padding: 18px 22px;
+            box-shadow: 0 25px 60px rgba(0,0,0,0.6);
+            width: 1122px;
+            min-width: 1122px;
+            max-width: 1122px;
+            margin: 0 auto;
+            position: relative;
+            border: 1px solid #cbd5e1;
+            box-sizing: border-box;
+        }
+        .ncm-top-banner {
+            background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            margin-bottom: 10px;
+            border-bottom: 4px solid #f59e0b;
+        }
+        .ncm-orange-badge {
+            background: linear-gradient(180deg, #f97316 0%, #ea580c 100%);
+            color: white;
+            border-radius: 10px;
+            padding: 6px 16px;
+            text-align: center;
+            min-width: 96px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            border: 1.5px solid rgba(255,255,255,0.45);
+            flex-shrink: 0;
+        }
+        .ncm-objectives-box {
+            background: #f8fafc;
+            border: 1.5px solid #cbd5e1;
+            border-right: 6px solid #2563eb;
+            border-radius: 10px;
+            padding: 9px 16px;
+            margin-bottom: 14px;
+            font-size: 13.5px;
+            line-height: 1.6;
+        }
+        [dir="ltr"] .ncm-objectives-box {
+            border-right: 1.5px solid #cbd5e1;
+            border-left: 6px solid #2563eb;
+        }
 
         .mindmap-container { position: relative; z-index: 1; width: 100%; padding: 4px 0; }
         #pathSvg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
-        .ncm-grid-layout { position: relative; z-index: 2; display: grid; grid-template-columns: 1fr 250px 1fr; gap: 28px; align-items: center; }
+        .ncm-grid-layout {
+            position: relative;
+            z-index: 2;
+            display: grid;
+            grid-template-columns: 1fr 246px 1fr;
+            gap: 26px;
+            align-items: center;
+        }
 
-        .station-box { background: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06); display: flex; flex-direction: column; height: auto; }
-        .station-header-bar { color: white; padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 800; font-size: 14px; }
-        .station-time-tag { background: rgba(0,0,0,0.28); color: white; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; border: 1px solid rgba(255,255,255,0.4); white-space: nowrap; flex-shrink: 0; }
-        .station-content-body { padding: 12px 14px; font-size: 13px; line-height: 1.65; }
+        .station-box {
+            background: #ffffff;
+            border: 1.5px solid #cbd5e1;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.07);
+            display: flex;
+            flex-direction: column;
+            height: auto;
+        }
+        .station-header-bar {
+            color: white;
+            padding: 8px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            font-weight: 800;
+            font-size: 13.5px;
+        }
+        .station-time-tag {
+            background: rgba(0,0,0,0.28);
+            color: #ffffff;
+            padding: 2px 10px;
+            border-radius: 999px;
+            font-size: 11.5px;
+            font-weight: 800;
+            border: 1px solid rgba(255,255,255,0.4);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .station-content-body {
+            padding: 10px 14px;
+            font-size: 12.8px;
+            line-height: 1.65;
+            background: #ffffff;
+        }
 
         .center-hub-box { display: flex; align-items: center; justify-content: center; padding: 6px; }
-        .center-blue-circle { width: 224px; height: 224px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #2563eb 0%, #1e3a8a 90%); color: white; padding: 15px; text-align: center; border: 5px solid #ffffff; outline: 3px solid #2563eb; box-shadow: 0 10px 28px rgba(37, 99, 235, 0.35); display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; margin: 0 auto; }
+        .center-blue-circle {
+            width: 222px;
+            height: 222px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 35% 30%, #2563eb 0%, #1e3a8a 92%);
+            color: white;
+            padding: 14px;
+            text-align: center;
+            border: 5px solid #ffffff;
+            outline: 3.5px solid #2563eb;
+            box-shadow: 0 12px 30px rgba(37, 99, 235, 0.35);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            margin: 0 auto;
+        }
 
         [contenteditable="true"]:focus { outline: 2px dashed #f59e0b; background: rgba(245, 158, 11, 0.1); border-radius: 4px; }
 
-        /* خط كبير، مريح، وواضح جداً للمختبر العلمي والملخصات */
         .prose-output {
             line-height: 2.0;
             font-size: 17px;
@@ -266,7 +380,6 @@ HTML_TEMPLATE = r"""
             margin: 12px 0 !important;
         }
 
-        /* إعدادات طباعة احترافية تملأ الصفحة بالكامل وبخط كبير دون فراغات */
         @media print {
             html, body {
                 background: #ffffff !important;
@@ -353,43 +466,42 @@ HTML_TEMPLATE = r"""
                 <div>
                     <div class="flex items-center gap-2">
                         <h1 class="text-base md:text-lg font-black text-white tracking-wide">الأكاديمية الذكية <span class="text-cyan-400">Pro</span></h1>
-                        <span class="hidden sm:inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">الإصدار المتقدم</span>
                     </div>
-                    <p class="text-[11px] text-slate-400">بيئة الذكاء الاصطناعي للتخطيط التربوي والتحليل العلمي</p>
+                    <p class="text-[11px] text-slate-400">منصة التخطيط التربوي والدعم الأكاديمي</p>
                 </div>
             </div>
             <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/25">
                 <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span class="text-[11px] font-bold text-emerald-300">نشط 24/7</span>
+                <span class="text-[11px] font-bold text-emerald-300">متصل</span>
             </div>
         </header>
 
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3.5">
             <button type="button" onclick="switchSection('ncm')" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-900/90 border border-cyan-500/50 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🗺️</span>
-                <span class="text-xs font-black text-white">خطاطات المدرسة الرائدة</span>
-                <span class="text-[10px] text-slate-400 font-semibold">هيكلة الدروس • التعليم الصريح</span>
+                <span class="text-xs font-black text-white">خطاطات الدروس</span>
+                <span class="text-[10px] text-slate-400 font-semibold">المدرسة الرائدة • التعليم الصريح</span>
             </button>
             <button type="button" onclick="switchSection('solver')" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col items-center text-center gap-1">
-                <span class="text-2xl">🔬</span>
-                <span class="text-xs font-black text-slate-100">المختبر العلمي للمسائل</span>
-                <span class="text-[10px] text-slate-400 font-semibold">برهنة صارمة • بدون اختصار</span>
+                <span class="text-2xl">📐</span>
+                <span class="text-xs font-black text-slate-100">حل المسائل والتمارين</span>
+                <span class="text-[10px] text-slate-400 font-semibold">تحليل علمي • خطوة بخطوة</span>
             </button>
             <button type="button" onclick="switchSection('summarizer')" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">📑</span>
-                <span class="text-xs font-black text-slate-100">الملخص الأكاديمي الذكي</span>
-                <span class="text-[10px] text-slate-400 font-semibold">استخلاص محاور ومفاهيم</span>
+                <span class="text-xs font-black text-slate-100">تلخيص المحاضرات والدروس</span>
+                <span class="text-[10px] text-slate-400 font-semibold">هيكلة المحاور والمفاهيم</span>
             </button>
             <button type="button" onclick="switchSection('translator')" id="card-translator" class="nav-card p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🌐</span>
-                <span class="text-xs font-black text-slate-100">المترجم الأكاديمي الدقيق</span>
+                <span class="text-xs font-black text-slate-100">الترجمة الأكاديمية</span>
                 <span class="text-[10px] text-slate-400 font-semibold">ترجمة علمية وتربوية</span>
             </button>
         </div>
 
         <div id="apiModal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
             <div class="glass-panel p-6 rounded-3xl max-w-md w-full border border-blue-500/40">
-                <h3 class="text-base font-bold mb-2 text-cyan-400">إعداد مفتاح الخدمة السحابية (خاص بالمشرف)</h3>
+                <h3 class="text-base font-bold mb-2 text-cyan-400">إعداد مفتاح الخدمة السحابية</h3>
                 <input type="password" id="apiKeyInput" placeholder="أدخل مفتاح Gemini API هنا..." class="w-full p-3 rounded-xl bg-slate-900 border border-slate-700 text-white mb-4 text-left font-mono text-sm" dir="ltr">
                 <div class="flex justify-end gap-2">
                     <button type="button" onclick="toggleApiModal()" class="px-4 py-2 rounded-xl bg-slate-800 text-xs font-bold">إغلاق</button>
@@ -399,12 +511,12 @@ HTML_TEMPLATE = r"""
         </div>
     </div>
 
-    <!-- ==================== القسم 1: خطاطات المدرسة الرائدة ==================== -->
+    <!-- ==================== القسم 1: خطاطات الدروس ==================== -->
     <div id="sec-ncm" class="app-section active-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-5 shadow-2xl mb-6 no-print">
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
                 <div class="lg:col-span-2">
-                    <label class="block text-xs font-bold text-cyan-400 mb-2">1. ارفع ملف الدرس أو الصق محتواه:</label>
+                    <label class="block text-xs font-bold text-cyan-400 mb-2">1. ملف الدرس أو المحتوى:</label>
                     <div class="flex items-center gap-2 mb-2.5">
                         <label class="flex-1 min-w-0 cursor-pointer bg-slate-800/90 hover:bg-slate-800 border-2 border-dashed border-cyan-500/50 rounded-2xl p-3 text-center transition flex items-center justify-center gap-2">
                             <span class="text-lg flex-shrink-0">📂</span>
@@ -413,16 +525,17 @@ HTML_TEMPLATE = r"""
                         </label>
                         <button type="button" id="ncmClearBtn" onclick="clearNcmFile()" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
                     </div>
-                    <textarea id="ncmTextInput" rows="3" placeholder="أو الصق نص الدرس أو الجذاذة هنا..." class="w-full p-3 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-cyan-500 outline-none"></textarea>
+                    <textarea id="ncmTextInput" rows="3" placeholder="أو الصق محتوى الدرس أو الجذاذة هنا..." class="w-full p-3 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-cyan-500 outline-none"></textarea>
                 </div>
 
                 <div class="bg-slate-900/75 p-4 rounded-2xl border border-slate-800 flex flex-col justify-between">
                     <div>
-                        <label class="block text-xs font-bold text-cyan-400 mb-2">2. عدد المحطات:</label>
-                        <div class="grid grid-cols-5 gap-1.5 mb-3">
+                        <label class="block text-xs font-bold text-cyan-400 mb-2">2. عدد المحطات وبيانات الترويسة:</label>
+                        <div class="grid grid-cols-6 gap-1.5 mb-3">
+                            <button type="button" onclick="setStations(0)" id="st-btn-0" class="st-btn active-st py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-[11px] text-white">تلقائي</button>
                             <button type="button" onclick="setStations(2)" id="st-btn-2" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">2</button>
                             <button type="button" onclick="setStations(3)" id="st-btn-3" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">3</button>
-                            <button type="button" onclick="setStations(4)" id="st-btn-4" class="st-btn active-st py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">4</button>
+                            <button type="button" onclick="setStations(4)" id="st-btn-4" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">4</button>
                             <button type="button" onclick="setStations(5)" id="st-btn-5" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">5</button>
                             <button type="button" onclick="setStations(6)" id="st-btn-6" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">6</button>
                         </div>
@@ -441,13 +554,13 @@ HTML_TEMPLATE = r"""
             </div>
 
             <button type="button" onclick="generateNCM()" id="ncmGenBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 border border-cyan-300/30 font-black text-white text-sm tracking-wide flex items-center justify-center gap-2">
-                <span>تصميم الخطاطة التربوية للدرس</span>
+                <span>إنشاء خطاطة الدرس</span>
                 <span class="text-base">⚡</span>
             </button>
         </div>
 
         <div id="printBar" class="hidden mb-3 flex flex-wrap items-center justify-between gap-2 glass-panel px-4 py-2.5 rounded-2xl no-print">
-            <span class="text-xs font-bold text-emerald-400">✅ الخطاطة جاهزة (جميع النصوص قابلة للتعديل المباشر باللمس)</span>
+            <span class="text-xs font-bold text-emerald-400">✅ الخطاطة جاهزة (يمكنك النقر على أي نص لتعديله مباشرة)</span>
             <button type="button" onclick="printDocument('landscape')" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / حفظ PDF</button>
         </div>
 
@@ -472,25 +585,25 @@ HTML_TEMPLATE = r"""
                 <div id="mindmapContainer" class="mindmap-container">
                     <svg id="pathSvg"></svg>
                     <div class="ncm-grid-layout">
-                        <div id="colFirst" class="flex flex-col justify-center gap-4"></div>
-                        <div id="colCenter" class="flex flex-col items-center justify-center gap-4"></div>
-                        <div id="colLast" class="flex flex-col justify-center gap-4"></div>
+                        <div id="colFirst" class="flex flex-col justify-center gap-3.5"></div>
+                        <div id="colCenter" class="flex flex-col items-center justify-center gap-3.5"></div>
+                        <div id="colLast" class="flex flex-col justify-center gap-3.5"></div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- ==================== القسم 2: المختبر التحليلي لحل المسائل ==================== -->
+    <!-- ==================== القسم 2: حل المسائل والتمارين ==================== -->
     <div id="sec-solver" class="app-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-800">
                 <div>
                     <h2 class="text-base md:text-lg font-black text-cyan-400 flex items-center gap-2">
-                        <span>🔬</span>
-                        <span>المختبر التحليلي لحل المسائل والتمارين العلمية</span>
+                        <span>📐</span>
+                        <span>حل المسائل والتمارين العلمية</span>
                     </h2>
-                    <p class="text-xs text-slate-400 mt-0.5">برهنة رياضية وعلمية صارمة 100% بدون اختصار لأي خطوة جبرية أو استدلالية.</p>
+                    <p class="text-xs text-slate-400 mt-0.5">تحليل منهجي متكامل للمسائل الرياضية والعلمية مع صياغة الخطوات بالتفصيل.</p>
                 </div>
             </div>
 
@@ -504,40 +617,40 @@ HTML_TEMPLATE = r"""
                         </label>
                         <button type="button" id="solverClearBtn" onclick="clearToolFile('solver')" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
                     </div>
-                    <textarea id="solverInput" rows="4" placeholder="أو اكتب نص المسألة أو المعادلات الرياضية هنا..." class="w-full p-3.5 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-cyan-500 outline-none"></textarea>
+                    <textarea id="solverInput" rows="4" placeholder="أو اكتب نص المسألة أو المعادلات هنا..." class="w-full p-3.5 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-cyan-500 outline-none"></textarea>
                 </div>
 
                 <div class="bg-slate-900/75 p-4 rounded-2xl border border-slate-800 flex flex-col justify-between gap-2">
                     <div>
-                        <label class="block text-[11px] font-bold text-cyan-400 mb-1">المجال العلمي:</label>
+                        <label class="block text-[11px] font-bold text-cyan-400 mb-1">التخصص:</label>
                         <select id="solverDomain" class="w-full p-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-white mb-2.5">
-                            <option value="Higher Mathematics (CPGE MPSI/MP, Algebra, Analysis, Geometry, Probability)">📐 الرياضيات العليا والأقسام التحضيرية</option>
-                            <option value="Physics, Mechanics, Electromagnetism & Chemistry">⚡ الفيزياء والكهرباء والكيمياء</option>
-                            <option value="Life & Earth Sciences (SVT) & Engineering">🧬 علوم الحياة والأرض والهندسة</option>
-                            <option value="Languages, Grammar & Literature">📖 اللغات والقواعد والتحليل النصي</option>
+                            <option value="Mathematics (Algebra, Analysis, Geometry, Probability)">الرياضيات</option>
+                            <option value="Physics, Mechanics, Electromagnetism & Chemistry">الفيزياء والكيمياء</option>
+                            <option value="Life & Earth Sciences (SVT) & Engineering">علوم الحياة والأرض والهندسة</option>
+                            <option value="Languages, Grammar & Literature">اللغات والدراسات الأدبية</option>
                         </select>
 
-                        <label class="block text-[11px] font-bold text-cyan-400 mb-1">منهجية ومستوى الصرامة:</label>
+                        <label class="block text-[11px] font-bold text-cyan-400 mb-1">مستوى التفصيل:</label>
                         <select id="solverDepth" class="w-full p-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-white mb-2.5">
-                            <option value="deep">🎯 برهان أكاديمي صارم ومفصل 100% (دون أي اختصار)</option>
-                            <option value="pedagogical">💡 شرح بيداغوجي متدرج مع تبسيط المفاهيم</option>
-                            <option value="concise">⚡ حل مركز ومباشر (الخطوات الأساسية)</option>
+                            <option value="deep">حل مفصل وشامل</option>
+                            <option value="pedagogical">شرح تعليمي مبسط</option>
+                            <option value="concise">حل مختصر ومباشر</option>
                         </select>
 
-                        <label class="block text-[11px] font-bold text-cyan-400 mb-1">لغة التحرير:</label>
+                        <label class="block text-[11px] font-bold text-cyan-400 mb-1">لغة الإجابة:</label>
                         <select id="solverLang" class="w-full p-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-white">
-                            <option value="auto">تلقائي (مطابق للغة المسألة المرفوعة)</option>
-                            <option value="fr">Français (تحرير أكاديمي فرنسي 100%)</option>
-                            <option value="ar">العربية (تحرير علمي عربي 100%)</option>
-                            <option value="en">English (Academic English 100%)</option>
+                            <option value="auto">تلقائي (نفس لغة التمرين)</option>
+                            <option value="fr">الفرنسية (Français)</option>
+                            <option value="ar">العربية</option>
+                            <option value="en">الإنجليزية (English)</option>
                         </select>
                     </div>
                 </div>
             </div>
 
             <button type="button" onclick="runSmartTool('solver')" id="solverBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 border border-cyan-300/30 font-black text-white text-sm flex items-center justify-center gap-2">
-                <span>بدء البرهنة الرياضية والعلمية الصارمة</span>
-                <span>🚀</span>
+                <span>حل المسألة وعرض الخطوات</span>
+                <span>⚡</span>
             </button>
         </div>
 
@@ -545,26 +658,26 @@ HTML_TEMPLATE = r"""
             <div class="flex flex-wrap justify-between items-center border-b border-slate-700/80 pb-3 mb-5 no-print gap-2">
                 <div class="flex items-center gap-2">
                     <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-                    <span class="text-xs font-black text-emerald-400">الحل البرهاني الكامل (بخط واضح وتنسيق قياسي للطباعة)</span>
+                    <span class="text-xs font-black text-emerald-400">الحل المفصل</span>
                 </div>
                 <div class="flex gap-2">
-                    <button type="button" onclick="copyText('solverOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold text-slate-200">📋 نسخ الحل</button>
-                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-black text-white">🖨️ طباعة / حفظ PDF كامل الصفحة</button>
+                    <button type="button" onclick="copyText('solverOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold text-slate-200">📋 نسخ</button>
+                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-black text-white">🖨️ طباعة / حفظ PDF</button>
                 </div>
             </div>
             <div id="solverOutput" class="prose-output"></div>
         </div>
     </div>
 
-    <!-- ==================== القسم 3: الملخص الأكاديمي الذكي ==================== -->
+    <!-- ==================== القسم 3: تلخيص المحاضرات والدروس ==================== -->
     <div id="sec-summarizer" class="app-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <div class="mb-4 pb-3 border-b border-slate-800">
                 <h2 class="text-base md:text-lg font-black text-amber-400 flex items-center gap-2">
                     <span>📑</span>
-                    <span>الملخص الأكاديمي وهيكلة المحاضرات والدروس</span>
+                    <span>تلخيص المحاضرات والدروس</span>
                 </h2>
-                <p class="text-xs text-slate-400 mt-0.5">تحويل الملفات والمحاضرات الطويلة إلى ملخصات مركزة، جداول مقارنة، وقواعد أساسية.</p>
+                <p class="text-xs text-slate-400 mt-0.5">استخلاص المحاور الأساسية والمفاهيم والقواعد في ملخص منظم.</p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
@@ -577,23 +690,23 @@ HTML_TEMPLATE = r"""
                         </label>
                         <button type="button" id="summarizerClearBtn" onclick="clearToolFile('summarizer')" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
                     </div>
-                    <textarea id="summarizerInput" rows="4" placeholder="أو الصق النص المراد تلخيصه وهيكلة محاوره هنا..." class="w-full p-3.5 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-amber-500 outline-none"></textarea>
+                    <textarea id="summarizerInput" rows="4" placeholder="أو الصق النص المراد تلخيصه هنا..." class="w-full p-3.5 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-amber-500 outline-none"></textarea>
                 </div>
                 <div class="bg-slate-900/75 p-4 rounded-2xl border border-slate-800 flex flex-col justify-center">
-                    <label class="block text-xs font-bold text-amber-400 mb-2">لغة الملخص المهيكل:</label>
+                    <label class="block text-xs font-bold text-amber-400 mb-2">لغة الملخص:</label>
                     <select id="summarizerLang" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-white">
-                        <option value="auto">تلقائي (مطابق للغة الملف الأصلي)</option>
-                        <option value="fr">Français (100%)</option>
-                        <option value="ar">العربية (100%)</option>
-                        <option value="en">English (100%)</option>
+                        <option value="auto">تلقائي (نفس لغة الملف)</option>
+                        <option value="fr">الفرنسية (Français)</option>
+                        <option value="ar">العربية</option>
+                        <option value="en">الإنجليزية (English)</option>
                     </select>
                 </div>
             </div>
-            <button type="button" onclick="runSmartTool('summarizer')" id="summarizerBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 font-black text-slate-950 text-sm">استخلاص الملخص الأكاديمي المهيكل ✨</button>
+            <button type="button" onclick="runSmartTool('summarizer')" id="summarizerBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 font-black text-slate-950 text-sm">إعداد الملخص المنظم ✨</button>
         </div>
         <div id="summarizerResultBox" class="hidden glass-panel rounded-3xl p-6 md:p-8 prose-print-box mb-8">
             <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-5 no-print">
-                <span class="text-xs font-black text-amber-400">✅ الملخص الأكاديمي المهيكل</span>
+                <span class="text-xs font-black text-amber-400">✅ الملخص المنظم</span>
                 <div class="flex gap-2">
                     <button type="button" onclick="copyText('summarizerOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 text-xs font-bold">📋 نسخ</button>
                     <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-amber-600 text-xs font-bold text-white">🖨️ طباعة / حفظ PDF</button>
@@ -603,15 +716,15 @@ HTML_TEMPLATE = r"""
         </div>
     </div>
 
-    <!-- ==================== القسم 4: المترجم الأكاديمي الدقيق ==================== -->
+    <!-- ==================== القسم 4: الترجمة الأكاديمية ==================== -->
     <div id="sec-translator" class="app-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <div class="mb-4 pb-3 border-b border-slate-800">
                 <h2 class="text-base md:text-lg font-black text-emerald-400 flex items-center gap-2">
                     <span>🌐</span>
-                    <span>المترجم الأكاديمي والتربوي الدقيق</span>
+                    <span>الترجمة الأكاديمية والتربوية</span>
                 </h2>
-                <p class="text-xs text-slate-400 mt-0.5">ترجمة علمية رصينة تحافظ على المصطلحات التخصصية، السياق البيداغوجي، والرموز الرياضية.</p>
+                <p class="text-xs text-slate-400 mt-0.5">ترجمة دقيقة تحافظ على المصطلحات التخصصية والرموز العلمية.</p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
@@ -624,22 +737,22 @@ HTML_TEMPLATE = r"""
                         </label>
                         <button type="button" id="translatorClearBtn" onclick="clearToolFile('translator')" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
                     </div>
-                    <textarea id="translatorInput" rows="4" placeholder="أو الصق النص الأكاديمي أو التربوي للترجمة..." class="w-full p-3.5 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-emerald-500 outline-none"></textarea>
+                    <textarea id="translatorInput" rows="4" placeholder="أو الصق النص المراد ترجمته هنا..." class="w-full p-3.5 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-emerald-500 outline-none"></textarea>
                 </div>
                 <div class="bg-slate-900/75 p-4 rounded-2xl border border-slate-800 flex flex-col justify-center">
-                    <label class="block text-xs font-bold text-emerald-400 mb-2">الترجمة إلى اللغة:</label>
+                    <label class="block text-xs font-bold text-emerald-400 mb-2">الترجمة إلى:</label>
                     <select id="translatorTarget" class="w-full p-2.5 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-white">
-                        <option value="French (Français académique)">الفرنسية الأكاديمية (Français)</option>
-                        <option value="Modern Standard Arabic (العربية الفصحى العلمية)">العربية الفصحى العلمية</option>
-                        <option value="Academic English">الإنجليزية الأكاديمية (English)</option>
+                        <option value="French (Français académique)">الفرنسية (Français)</option>
+                        <option value="Modern Standard Arabic (العربية الفصحى)">العربية</option>
+                        <option value="Academic English">الإنجليزية (English)</option>
                     </select>
                 </div>
             </div>
-            <button type="button" onclick="runSmartTool('translator')" id="translatorBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 font-black text-white text-sm">ترجمة أكاديمية فورية 🌐</button>
+            <button type="button" onclick="runSmartTool('translator')" id="translatorBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 font-black text-white text-sm">ترجمة النص 🌐</button>
         </div>
         <div id="translatorResultBox" class="hidden glass-panel rounded-3xl p-6 md:p-8 prose-print-box mb-8">
             <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-5 no-print">
-                <span class="text-xs font-black text-emerald-400">✅ النص المترجم بالصياغة الأكاديمية</span>
+                <span class="text-xs font-black text-emerald-400">✅ النص المترجم</span>
                 <div class="flex gap-2">
                     <button type="button" onclick="copyText('translatorOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 text-xs font-bold">📋 نسخ</button>
                     <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-emerald-600 text-xs font-bold text-white">🖨️ طباعة / حفظ PDF</button>
@@ -650,7 +763,7 @@ HTML_TEMPLATE = r"""
     </div>
 
     <script>
-        let stationsCount = 4;
+        let stationsCount = 0; // 0 = استخراج تلقائي دقيق لعدد المحطات الفعلي من الدرس
         let ncmBase64 = null, ncmMime = null, ncmUploadedFilename = '';
         let toolFiles = { solver: {}, summarizer: {}, translator: {} };
         let adminTapCounter = 0, adminTapTimer = null;
@@ -713,7 +826,7 @@ HTML_TEMPLATE = r"""
         function saveApiKey() {
             localStorage.setItem('gemini_api_key', document.getElementById('apiKeyInput').value.trim());
             toggleApiModal();
-            alert('تم حفظ مفتاح الخدمة بنجاح!');
+            alert('تم حفظ المفتاح بنجاح.');
         }
 
         function renderFormattedOutput(elementId, rawMarkdown) {
@@ -830,7 +943,7 @@ HTML_TEMPLATE = r"""
             const btn = document.getElementById('ncmGenBtn');
             const origHtml = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = '<span>⏳ جاري تصميم وهيكلة الخطاطة التربوية...</span>';
+            btn.innerHTML = '<span>⏳ جاري قراءة الدرس واستخراج المحطات...</span>';
             try {
                 const res = await fetch('/generate_ncm', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -860,20 +973,20 @@ HTML_TEMPLATE = r"""
             const cleanTitle = (st.title || '').replace(/^\d+[\.\-\s]*/, '');
             const bulletsHtml = (st.bullets || []).map(b => `
                 <li class="mb-1.5 flex items-start gap-2">
-                    <span style="color: ${color};" class="font-black mt-0.5">•</span>
+                    <span style="color: ${color};" class="font-black mt-0.5">▪</span>
                     <div contenteditable="true">
                         ${b.label ? `<strong class="text-slate-900 font-extrabold">${b.label} : </strong>` : ''}
                         <span class="text-slate-700 font-medium">${b.text || ''}</span>
                     </div>
                 </li>
             `).join('');
-            return `<div class="station-box" style="border-top: 4px solid ${color};"><div class="station-header-bar" style="background: ${color};"><span contenteditable="true">${idx + 1}. ${cleanTitle}</span>${st.duration ? `<span contenteditable="true" class="station-time-tag">${st.duration}</span>` : ''}</div><div class="station-content-body"><ul class="list-none p-0 m-0">${bulletsHtml}</ul></div></div>`;
+            return `<div class="station-box" style="border-top: 4px solid ${color};"><div class="station-header-bar" style="background: ${color};"><span contenteditable="true">${idx + 1}. ${cleanTitle}</span>${st.duration ? `<span contenteditable="true" class="station-time-tag">⏱ ${st.duration}</span>` : ''}</div><div class="station-content-body"><ul class="list-none p-0 m-0">${bulletsHtml}</ul></div></div>`;
         }
 
         function createCenterHub(d, isFr, ncmNum) {
             const tag1 = isFr ? "Enseignement Explicite" : "التعليم الصريح";
             const tag2 = isFr ? "École Pionnière" : "المدرسة الرائدة";
-            const seanceBadge = d.seance_ncm_badge || (isFr ? `Fiche N° ${d.ncm_number || ncmNum}` : `خطاطة رقم (${d.ncm_number || ncmNum})`);
+            const seanceBadge = d.seance_ncm_badge || (isFr ? `Séance (Fiche ${d.ncm_number || ncmNum})` : `خطاطة رقم (${d.ncm_number || ncmNum})`);
             return `<div class="center-hub-box"><div id="centralHub" class="center-blue-circle"><div class="text-[11px] font-extrabold text-amber-300 tracking-wide mb-0.5">${tag1}</div><div class="text-[11px] font-bold text-white mb-1.5 opacity-95">${tag2}</div><div contenteditable="true" class="text-sm md:text-base font-black text-white bg-white/20 py-1 px-4 rounded-full mb-1.5 border border-white/30 shadow-inner">${d.subject_level || ''}</div><div contenteditable="true" class="text-[11px] font-bold text-slate-100 mb-1.5 leading-tight">${d.unit_week || ''}</div><div contenteditable="true" class="text-xs font-black text-amber-300 bg-amber-500/25 border border-amber-300/40 px-3 py-0.5 rounded-full mb-1">${seanceBadge}</div>${d.livret_pages ? `<div contenteditable="true" class="text-[10.5px] font-semibold text-cyan-200 bg-black/30 py-0.5 px-2.5 rounded-full">${d.livret_pages}</div>` : ''}</div></div>`;
         }
 
@@ -907,6 +1020,10 @@ HTML_TEMPLATE = r"""
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                 path.setAttribute('d', dPath); path.setAttribute('stroke', color); path.setAttribute('stroke-width', '2.8'); path.setAttribute('stroke-dasharray', '6,5'); path.setAttribute('fill', 'none');
                 svg.appendChild(path);
+
+                const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                dot.setAttribute('cx', targetX); dot.setAttribute('cy', targetY); dot.setAttribute('r', '4.5'); dot.setAttribute('fill', color);
+                svg.appendChild(dot);
             });
         }
 
@@ -921,7 +1038,8 @@ HTML_TEMPLATE = r"""
             document.getElementById('objLabel').innerText = isFr ? "Objectifs d'apprentissage : " : "أهداف التعلم: ";
             document.getElementById('objText').innerText = d.objectives || '';
 
-            const stations = (d.stations || []).slice(0, stationsCount);
+            const rawStations = d.stations || [];
+            const stations = stationsCount > 0 ? rawStations.slice(0, stationsCount) : rawStations.slice(0, 6);
             const colFirst = document.getElementById('colFirst');
             const colCenter = document.getElementById('colCenter');
             const colLast = document.getElementById('colLast');
@@ -929,15 +1047,25 @@ HTML_TEMPLATE = r"""
             const hubHtml = createCenterHub(d, isFr, d.ncm_number || ncmNum);
 
             if (stations.length === 2) {
-                colFirst.innerHTML = createStationCard(stations[0], 0); colCenter.innerHTML = hubHtml; colLast.innerHTML = createStationCard(stations[1], 1);
+                colFirst.innerHTML = createStationCard(stations[0], 0);
+                colCenter.innerHTML = hubHtml;
+                colLast.innerHTML = createStationCard(stations[1], 1);
             } else if (stations.length === 3) {
-                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1); colCenter.innerHTML = hubHtml; colLast.innerHTML = createStationCard(stations[2], 2);
+                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
+                colCenter.innerHTML = hubHtml;
+                colLast.innerHTML = createStationCard(stations[2], 2);
             } else if (stations.length === 4) {
-                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1); colCenter.innerHTML = hubHtml; colLast.innerHTML = createStationCard(stations[2], 2) + createStationCard(stations[3], 3);
+                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
+                colCenter.innerHTML = hubHtml;
+                colLast.innerHTML = createStationCard(stations[2], 2) + createStationCard(stations[3], 3);
             } else if (stations.length === 5) {
-                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1); colCenter.innerHTML = hubHtml + createStationCard(stations[2], 2); colLast.innerHTML = createStationCard(stations[3], 3) + createStationCard(stations[4], 4);
-            } else {
-                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1); colCenter.innerHTML = createStationCard(stations[2], 2) + hubHtml + createStationCard(stations[3], 3); colLast.innerHTML = createStationCard(stations[4], 4) + createStationCard(stations[5], 5);
+                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
+                colCenter.innerHTML = hubHtml + createStationCard(stations[2], 2);
+                colLast.innerHTML = createStationCard(stations[3], 3) + createStationCard(stations[4], 4);
+            } else if (stations.length >= 6) {
+                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
+                colCenter.innerHTML = createStationCard(stations[2], 2) + hubHtml + createStationCard(stations[3], 3);
+                colLast.innerHTML = createStationCard(stations[4], 4) + createStationCard(stations[5], 5);
             }
 
             document.getElementById('printBar').classList.remove('hidden');
@@ -953,7 +1081,7 @@ HTML_TEMPLATE = r"""
             const btn = document.getElementById(toolType + 'Btn');
             const origHtml = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = '<span>⏳ جاري التحليل البرهاني الصارم ومراجعة جميع الخطوات...</span>';
+            btn.innerHTML = '<span>⏳ جاري إعداد الإجابة...</span>';
 
             let extraOptions = {};
             if (toolType === 'solver') {
@@ -986,7 +1114,7 @@ HTML_TEMPLATE = r"""
 
         function copyText(elId) {
             navigator.clipboard.writeText(document.getElementById(elId).innerText);
-            alert('تم نسخ المحتوى بنجاح!');
+            alert('تم نسخ المحتوى بنجاح.');
         }
         window.addEventListener('resize', drawConnectors);
     </script>
@@ -1009,7 +1137,7 @@ def generate_ncm():
     data = request.get_json(force=True)
     text = data.get('text', '')
     filename = data.get('filename', '')
-    stations = int(data.get('stations', 4))
+    stations = int(data.get('stations', 0))
     ncm_num = data.get('ncm_num', '10')
     overrides = data.get('meta_overrides') or {}
     file_b64 = data.get('file_b64')
@@ -1025,36 +1153,60 @@ def generate_ncm():
     uni = overrides.get('unite') or fn_meta.get('unite') or ''
     sem = overrides.get('semaine') or fn_meta.get('semaine') or ''
     sea = overrides.get('seance') or fn_meta.get('seance') or ''
+    if not overrides.get('ncm') and fn_meta.get('ncm'):
+        ncm_num = fn_meta.get('ncm')
 
-    is_fr = filename.upper().startswith('FR') or (text and len(re.findall(r'[a-zA-Zéèêëàâîïôùûç]', text[:2000])) > len(re.findall(r'[\u0600-\u06FF]', text[:2000])))
+    is_fr = filename.upper().startswith('FR') or (text and len(re.findall(r'[a-zA-Zéèêëàâîïôùûç]', text[:2500])) > len(re.findall(r'[\u0600-\u06FF]', text[:2500])))
 
     if is_fr:
+        station_rule = (
+            f"Divise la séance en EXACTEMENT {stations} stations méthodologiques correspondant aux étapes clés du cours."
+            if stations > 0 else
+            "Détecte et extrais EXACTEMENT toutes les étapes/stations réelles présentes dans le support de cours (généralement entre 4 et 6 stations : ex. Ouverture de la séance / Mise en situation, Modelage / Découverte, Pratique guidée / Entraînement, Pratique autonome / Application, Clôture / Synthèse)."
+        )
         system_prompt = f"""Tu es un inspecteur pédagogique expert de l'Enseignement Explicite (École Pionnière au Maroc).
-RÈGLE DE LANGUE : Réponds 100% en FRANÇAIS ("lang": "fr"). Zéro mot en arabe ! N'utilise jamais l'acronyme NCM.
-Format header_title : "Français – Niveau {lvl or 'X'} | Période {per or 'P'} - Unité {uni or 'U'} - Semaine {sem or 'W'} - Séance {sea or 'S'}"
-Format lesson_subtitle : "Enseignement explicite | [Titre de la leçon] (Livret : p. ...)"
-Divise en EXACTEMENT ({stations}) stations méthodologiques avec des durées réelles (ex: 15 min).
-Retourne UNIQUEMENT un JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"Français N{lvl or '2'}","unit_week":"Période {per or '2'} - Unité {uni or '1'} | Semaine {sem or '2'}","seance_ncm_badge":"Séance {sea or '4'} (Fiche {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+Analyse minutieusement le contenu du cours ci-joint et extrais toutes les informations avec une fidélité absolue :
+1. RÈGLE DE LANGUE : Réponds 100% en FRANÇAIS ("lang": "fr"). Zéro mot en arabe.
+2. MÉTADONNÉES EXACTES : Extrais du document (ou utilise les valeurs fournies : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
+   - header_title : "[Matière / Composante] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
+   - lesson_subtitle : "Enseignement explicite | [Titre exact de la leçon] (Livret : p. [numéro exact de page si mentionné])"
+   - objectives : Les objectifs d'apprentissage exacts formulés dans la leçon.
+3. STATIONS, NOMS ET DURÉES EXACTES :
+   - {station_rule}
+   - Pour chaque station, extrais son **nom officiel exact** dans le cours et sa **durée exacte en minutes** (ex: "5 min", "10 min", "15 min"). Si une durée n'est pas écrite explicitement sur une diapositive, répartis logiquement les 45 ou 55 minutes de la séance selon le standard de l'Enseignement Explicite.
+   - Dans chaque station, résume les actions de l'enseignant, les tâches des élèves, les exemples clés et les supports sous forme de puces structurées ("label" : "text").
+Retourne UNIQUEMENT un objet JSON valide :
+{{"lang":"fr","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (Fiche {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"10 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
     else:
-        system_prompt = f"""أنت مفتش وخبير بيداغوجي في برنامج التعليم الصريح بالمدرسة الرائدة.
-قاعدة اللغة: رد باللغة العربية الفصحى 100% ("lang": "ar").
-header_title: "[المادة] – المستوى {lvl or '2'} | المرحلة {per or '2'} - الوحدة {uni or '1'} - الأسبوع {sem or '2'} - الحصة {sea or '4'}"
-lesson_subtitle: "برنامج التعليم الصريح | [عنوان الدرس] (الكراسة: ص. ...)"
-قسّم الدرس إلى ({stations}) محطات منهجية دقيقة مع مدد زمنية حقيقية (مثال: 15 د).
+        station_rule = (
+            f"قسّم الحصة إلى ({stations}) محطات منهجية بالضبط تغطي كافة مراحل الدرس."
+            if stations > 0 else
+            "استخرج بدقة جميع المحطات والمراحل الفعلية الواردة في ملف الدرس (عادة ما بين 4 إلى 6 محطات في التعليم الصريح، مثل: افتتاح الحصة / التهيئة، النمذجة، الممارسة الموجهة، الممارسة المستقلة، اختتام الحصة)."
+        )
+        system_prompt = f"""أنت مفتش وخبير بيداغوجي في برنامج التعليم الصريح بالمدرسة الرائدة بالمغرب.
+حلّل محتوى الدرس المرفق بدقة متناهية واستخرج جميع عناصره بأمانة تامة:
+1. قاعدة اللغة: رد باللغة العربية الفصحى 100% ("lang": "ar").
+2. استخراج بيانات الترويسة الدقيقة من الملف (مع الاستئناس بالمعطيات المتوفرة: المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
+   - header_title: "[المادة والمكون] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
+   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس] (الكراسة: ص. [رقم الصفحة الدقيق إن وجد])"
+   - objectives: أهداف التعلم الدقيقة المسطرة في الدرس.
+3. المحطات، أسماؤها، ومددها الزمنية الدقيقة:
+   - {station_rule}
+   - لكل محطة، استخرج **اسمها الرسمي الدقيق** كما ورد في الشرائح أو الجذاذة، و**مدتها الزمنية الدقيقة بالدقائق** (مثال: "5 د"، "10 د"، "15 د"). في حال عدم ذكر المدة نصياً في الشريحة، قدّر المدة القانونية المناسبة لها ضمن زمن الحصة (45 أو 55 دقيقة).
+   - داخل كل محطة، لخّص بدقة ووضوح مهام الأستاذ، أنشطة المتعلمين، الأمثلة التطبيقية، والتقويم على شكل نقاط مهيكلة ("label": "text").
 أرجع JSON صالحاً فقط:
-{{"lang":"ar","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"اللغة العربية {lvl or '2'}","unit_week":"المرحلة {per or '2'} – الوحدة {uni or '1'} | الأسبوع {sem or '2'}","seance_ncm_badge":"الحصة {sea or '4'} (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"ar","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"10 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
 
-    parts = [{"text": system_prompt + "\n\nContent:\n" + (text[:35000] if text else "Analyze attached file.")}]
+    parts = [{"text": system_prompt + "\n\nLesson Content:\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
-    raw_text, err = call_gemini_api(api_key, parts, json_mode=True, temperature=0.1, high_rigor=False)
+    raw_text, err = call_gemini_api(api_key, parts, json_mode=True, temperature=0.05, high_rigor=True)
     if err or not raw_text:
         return jsonify({'error': f'تعذر التوليد: {err}'})
     try:
         res_json = json.loads(re.search(r'\{[\s\S]*\}', raw_text).group(0))
-        if 'stations' in res_json:
+        if stations > 0 and 'stations' in res_json:
             res_json['stations'] = res_json['stations'][:stations]
         return jsonify({'result': res_json})
     except Exception as e:
@@ -1100,7 +1252,7 @@ Analyze the input thoroughly and produce an executive, deeply structured academi
 4. **خلاصة تركيبية مركزة / Points essentiels à retenir** : High-yield takeaways in a structured table or callout block."""
         is_rigorous = False
     else:
-        domain = options.get('domain', 'Higher Mathematics & Sciences')
+        domain = options.get('domain', 'Mathematics & Sciences')
         depth = options.get('depth', 'deep')
         is_rigorous = True
         if depth == 'concise':
@@ -1108,26 +1260,26 @@ Analyze the input thoroughly and produce an executive, deeply structured academi
         elif depth == 'pedagogical':
             depth_instruction = "Provide a pedagogical, learner-friendly breakdown explaining the intuition behind each step, why each theorem is chosen, and how to avoid common pitfalls."
         else:
-            depth_instruction = r"""STRICT CPGE / AGRÉGATION MATHEMATICAL & SCIENTIFIC RIGOR PROTOCOL (ZERO-ERROR TOLERANCE):
+            depth_instruction = r"""STRICT MATHEMATICAL & SCIENTIFIC RIGOR PROTOCOL (ZERO-ERROR TOLERANCE):
 1. **ZERO HESITATION OR SELF-CORRECTION IN OUTPUT**: Never write internal monologue, doubts, or corrections in the text (e.g., NEVER write "Attention...", "Précisons...", "Attendez...", "Corrigeons..."). Verify the exact bounds of sums, indices, and hypotheses silently BEFORE writing the clean, definitive proof.
 2. **ZERO HAND-WAVING OR SKIPPED STEPS**: It is strictly FORBIDDEN to skip proofs at the end of an exercise using phrases like "on vérifie facilement", "on obtient directement par Cauchy-Schwarz", or "par sous-additivité". You MUST write out every intermediate algebraic substitution, index shift, quantifier ($\forall, \exists$), and inequality step-by-step from start to finish.
-   - When proving an inequality involving an $\inf$ (e.g., $(a\|c)x^2 + (b\|d)x^2 \le ((a+b)\|(c+d))x^2$), explicitly take any $(y,z)\in\mathbb{R}^2$ such that $y+z=x$, write $(a\|c)x^2 \le ay^2 + cz^2$ and $(b\|d)x^2 \le by^2 + dz^2$, sum the two inequalities to get $(a\|c + b\|d)x^2 \le (a+b)y^2 + (c+d)z^2$, and then pass to the infimum over $(y,z)$ satisfying $y+z=x$.
-   - When applying Cauchy-Schwarz or induction on $k$ terms, write the explicit vectors/terms and the complete algebraic chain.
+   - When proving an inequality involving an $\inf$, explicitly state the test variables, sum the inequalities, and pass to the infimum rigorously.
+   - When applying Cauchy-Schwarz or mathematical induction, write the explicit vectors/terms and the complete algebraic chain.
 3. **MANDATORY STRUCTURE FOR EACH EXERCISE**:
    - **1. قراءة تحليلية للمعطيات والمطلوب / Cadre formel et objectif** : Exact definitions and hypotheses.
-   - **2. التأصيل النظري والمبرهنات / Théorèmes et lemmes de référence** : Exact formulas used.
-   - **3. البرهنة المنهجية المفصلة / Démonstration rigoureuse question par question** : Solve EVERY single question and sub-question (1, 2, 3, 4, 5, 6...) with 100% completeness, giving the last questions the exact same depth and detail as the first question. Use clean LaTeX ($...$ inline, $$...$$ display). Put final results of each question in a Markdown blockquote (`>`).
-   - **4. إضاءة منهجية / Synthèse méthodologique** : Brief high-level mathematical insight."""
+   - **2. التأصيل النظري والمبرهنات / Théorèmes et propriétés de référence** : Exact formulas used.
+   - **3. الحل المفصل خطوة بخطوة / Résolution détaillée question par question** : Solve EVERY single question and sub-question (1, 2, 3, 4, 5, 6...) with 100% completeness, giving the last questions the exact same depth and detail as the first question. Use clean LaTeX ($...$ inline, $$...$$ display). Put final results of each question in a Markdown blockquote (`>`).
+   - **4. خلاصة منهجية / Synthèse méthodologique** : Brief high-level insight."""
 
         prompt = f"""You are a Chair Professor of {domain} (Professeur de Chaire Supérieure CPGE MPSI/MP* & Jury d'Agrégation).
 {lang_rule}
 {depth_instruction}"""
 
-    parts = [{"text": prompt + "\n\nInput Content:\n" + (text[:35000] if text else "Transcribe every symbol, index, and bound of the attached document with 100% accuracy and solve every question completely.")}]
+    parts = [{"text": prompt + "\n\nInput Content:\n" + (text[:40000] if text else "Transcribe every symbol, index, and bound of the attached document with 100% accuracy and solve every question completely.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
-    raw_text, err = call_gemini_api(api_key, parts, json_mode=False, temperature=0.05 if is_rigorous else 0.15, high_rigor=is_rigorous)
+    raw_text, err = call_gemini_api(api_key, parts, json_mode=False, temperature=0.04 if is_rigorous else 0.12, high_rigor=is_rigorous)
     if err or not raw_text:
         return jsonify({'error': f'خطأ: {err}'})
     return jsonify({'result': raw_text})
