@@ -1108,7 +1108,7 @@ Analyze the input thoroughly and produce an executive, deeply structured academi
         elif depth == 'pedagogical':
             depth_instruction = "Provide a pedagogical, learner-friendly breakdown explaining the intuition behind each step, why each theorem is chosen, and how to avoid common pitfalls."
         else:
-            depth_instruction = """STRICT CPGE / AGRÉGATION MATHEMATICAL & SCIENTIFIC RIGOR PROTOCOL (ZERO-ERROR TOLERANCE):
+            depth_instruction = r"""STRICT CPGE / AGRÉGATION MATHEMATICAL & SCIENTIFIC RIGOR PROTOCOL (ZERO-ERROR TOLERANCE):
 1. **ZERO HESITATION OR SELF-CORRECTION IN OUTPUT**: Never write internal monologue, doubts, or corrections in the text (e.g., NEVER write "Attention...", "Précisons...", "Attendez...", "Corrigeons..."). Verify the exact bounds of sums, indices, and hypotheses silently BEFORE writing the clean, definitive proof.
 2. **ZERO HAND-WAVING OR SKIPPED STEPS**: It is strictly FORBIDDEN to skip proofs at the end of an exercise using phrases like "on vérifie facilement", "on obtient directement par Cauchy-Schwarz", or "par sous-additivité". You MUST write out every intermediate algebraic substitution, index shift, quantifier ($\forall, \exists$), and inequality step-by-step from start to finish.
    - When proving an inequality involving an $\inf$ (e.g., $(a\|c)x^2 + (b\|d)x^2 \le ((a+b)\|(c+d))x^2$), explicitly take any $(y,z)\in\mathbb{R}^2$ such that $y+z=x$, write $(a\|c)x^2 \le ay^2 + cz^2$ and $(b\|d)x^2 \le by^2 + dz^2$, sum the two inequalities to get $(a\|c + b\|d)x^2 \le (a+b)y^2 + (c+d)z^2$, and then pass to the infimum over $(y,z)$ satisfying $y+z=x$.
