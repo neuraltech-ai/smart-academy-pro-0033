@@ -33,9 +33,10 @@ def keep_alive_ping():
 
 threading.Thread(target=keep_alive_ping, daemon=True).start()
 
-def get_available_models(api_key):
-    if api_key in AVAILABLE_MODELS_CACHE and AVAILABLE_MODELS_CACHE[api_key]:
-        return AVAILABLE_MODELS_CACHE[api_key]
+def get_available_models(api_key, high_rigor=False):
+    cache_key = f"{api_key}_{high_rigor}"
+    if cache_key in AVAILABLE_MODELS_CACHE and AVAILABLE_MODELS_CACHE[cache_key]:
+        return AVAILABLE_MODELS_CACHE[cache_key]
     try:
         r = requests.get(
             "https://generativelanguage.googleapis.com/v1beta/models",
@@ -47,21 +48,31 @@ def get_available_models(api_key):
             valid = [
                 m['name'].replace('models/', '') for m in models
                 if 'generateContent' in m.get('supportedGenerationMethods', [])
+                and 'vision' not in m['name'] and 'embedding' not in m['name']
             ]
             prioritized = []
-            for keyword in ['3.8-flash', 'flash-lite', '3.5-flash', '3.0-flash', '2.0-flash', 'flash', 'pro']:
-                for v in valid:
-                    if keyword in v and v not in prioritized and '2.5' not in v and '1.5' not in v:
-                        prioritized.append(v)
+            if high_rigor:
+                # أولوية قصوى لنماذج الاستدلال العميق والرياضيات المتقدمة مع استبعاد lite
+                priority_keywords = ['2.5-pro', '3.1-pro', '3-pro', '2.5-flash', '3-flash', '2.0-flash', 'pro', 'flash']
+                for keyword in priority_keywords:
+                    for v in valid:
+                        if keyword in v and 'lite' not in v and v not in prioritized:
+                            prioritized.append(v)
+            else:
+                priority_keywords = ['2.5-flash', '3-flash', '2.0-flash', 'flash', 'pro']
+                for keyword in priority_keywords:
+                    for v in valid:
+                        if keyword in v and v not in prioritized:
+                            prioritized.append(v)
             for v in valid:
-                if v not in prioritized and '2.5' not in v and '1.5' not in v:
+                if v not in prioritized:
                     prioritized.append(v)
             if prioritized:
-                AVAILABLE_MODELS_CACHE[api_key] = prioritized
+                AVAILABLE_MODELS_CACHE[cache_key] = prioritized
                 return prioritized
     except Exception:
         pass
-    return ["gemini-2.0-flash", "gemini-3.8-flash", "gemini-pro"]
+    return ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
 
 def extract_pptx_text(file_stream):
     text_runs = []
@@ -97,9 +108,12 @@ def parse_filename_metadata(filename):
     if ncm: meta['ncm'] = ncm.group(1)
     return meta
 
-def call_gemini_api(api_key, parts, json_mode=False, temperature=0.15):
-    candidate_models = get_available_models(api_key)
-    gen_config = {"temperature": temperature}
+def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
+    candidate_models = get_available_models(api_key, high_rigor=high_rigor)
+    gen_config = {
+        "temperature": temperature,
+        "maxOutputTokens": 8192
+    }
     if json_mode:
         gen_config["responseMimeType"] = "application/json"
     payload = {"contents": [{"parts": parts}], "generationConfig": gen_config}
@@ -112,14 +126,14 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.15):
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
                     json=payload,
                     headers=headers,
-                    timeout=75
+                    timeout=90
                 )
                 res_data = res.json()
                 if res.status_code == 200 and 'candidates' in res_data:
                     return res_data['candidates'][0]['content']['parts'][0]['text'], None
                 else:
                     last_error = res_data.get('error', {}).get('message', 'خطأ في الاستجابة')
-                    time.sleep(0.5)
+                    time.sleep(0.4)
             except Exception as e:
                 last_error = str(e)
     return None, last_error
@@ -136,11 +150,15 @@ HTML_TEMPLATE = r"""
     <script>
         window.MathJax = {
             tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']], processEscapes: true },
+            chtml: { scale: 1.12 },
             options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre'] }
         };
     </script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+    <style id="dynamicPageStyle">
+        @page { size: A4 portrait; margin: 10mm; }
+    </style>
     <style>
         body {
             font-family: 'Cairo', sans-serif;
@@ -151,12 +169,12 @@ HTML_TEMPLATE = r"""
             overflow-x: hidden;
         }
         .glass-panel {
-            background: rgba(15, 23, 42, 0.88);
+            background: rgba(15, 23, 42, 0.9);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(148, 163, 184, 0.14);
+            border: 1px solid rgba(148, 163, 184, 0.16);
             box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
         }
-        .app-section { display: none; animation: fadeIn 0.22s ease-out; }
+        .app-section { display: none; animation: fadeIn 0.2s ease-out; }
         .app-section.active-section { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -168,7 +186,7 @@ HTML_TEMPLATE = r"""
         }
         .nav-card.active {
             border-color: #38bdf8 !important;
-            background: linear-gradient(145deg, rgba(14, 165, 233, 0.22), rgba(30, 58, 138, 0.35)) !important;
+            background: linear-gradient(145deg, rgba(14, 165, 233, 0.24), rgba(30, 58, 138, 0.38)) !important;
             box-shadow: 0 8px 25px -4px rgba(56, 189, 248, 0.35);
             transform: translateY(-2px);
         }
@@ -189,7 +207,7 @@ HTML_TEMPLATE = r"""
         .ncm-sheet { background: #ffffff; color: #0f172a; border-radius: 14px; padding: 18px 22px; box-shadow: 0 20px 50px rgba(0,0,0,0.55); width: 1120px; min-width: 1120px; max-width: 1120px; margin: 0 auto; position: relative; border: 1px solid #cbd5e1; box-sizing: border-box; }
         .ncm-top-banner { background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%); color: white; border-radius: 12px; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; border-bottom: 4px solid #f59e0b; }
         .ncm-orange-badge { background: linear-gradient(180deg, #f97316 0%, #ea580c 100%); color: white; border-radius: 10px; padding: 6px 16px; text-align: center; min-width: 95px; box-shadow: 0 3px 10px rgba(0,0,0,0.25); border: 1.5px solid rgba(255,255,255,0.4); flex-shrink: 0; }
-        .ncm-objectives-box { background: #f8fafc; border: 1.5px solid #cbd5e1; border-right: 6px solid #2563eb; border-radius: 10px; padding: 9px 16px; margin-bottom: 16px; font-size: 13px; line-height: 1.55; }
+        .ncm-objectives-box { background: #f8fafc; border: 1.5px solid #cbd5e1; border-right: 6px solid #2563eb; border-radius: 10px; padding: 9px 16px; margin-bottom: 16px; font-size: 13.5px; line-height: 1.6; }
         [dir="ltr"] .ncm-objectives-box { border-right: 1.5px solid #cbd5e1; border-left: 6px solid #2563eb; }
 
         .mindmap-container { position: relative; z-index: 1; width: 100%; padding: 4px 0; }
@@ -197,67 +215,136 @@ HTML_TEMPLATE = r"""
         .ncm-grid-layout { position: relative; z-index: 2; display: grid; grid-template-columns: 1fr 250px 1fr; gap: 28px; align-items: center; }
 
         .station-box { background: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06); display: flex; flex-direction: column; height: auto; }
-        .station-header-bar { color: white; padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 800; font-size: 13.5px; }
-        .station-time-tag { background: rgba(0,0,0,0.28); color: white; padding: 2px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 800; border: 1px solid rgba(255,255,255,0.4); white-space: nowrap; flex-shrink: 0; }
-        .station-content-body { padding: 11px 14px; font-size: 12.5px; line-height: 1.65; }
+        .station-header-bar { color: white; padding: 8px 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 800; font-size: 14px; }
+        .station-time-tag { background: rgba(0,0,0,0.28); color: white; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; border: 1px solid rgba(255,255,255,0.4); white-space: nowrap; flex-shrink: 0; }
+        .station-content-body { padding: 12px 14px; font-size: 13px; line-height: 1.65; }
 
         .center-hub-box { display: flex; align-items: center; justify-content: center; padding: 6px; }
         .center-blue-circle { width: 224px; height: 224px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #2563eb 0%, #1e3a8a 90%); color: white; padding: 15px; text-align: center; border: 5px solid #ffffff; outline: 3px solid #2563eb; box-shadow: 0 10px 28px rgba(37, 99, 235, 0.35); display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; margin: 0 auto; }
 
         [contenteditable="true"]:focus { outline: 2px dashed #f59e0b; background: rgba(245, 158, 11, 0.1); border-radius: 4px; }
 
-        /* تنسيق احترافي عالي الدقة للمخرجات العلمية والأكاديمية */
-        .prose-output { line-height: 1.95; font-size: 15px; color: #e2e8f0; }
+        /* خط كبير، مريح، وواضح جداً للمختبر العلمي والملخصات */
+        .prose-output {
+            line-height: 2.0;
+            font-size: 17px;
+            color: #f1f5f9;
+            width: 100%;
+        }
         .prose-output h1, .prose-output h2, .prose-output h3 {
             color: #38bdf8;
             font-weight: 900;
-            margin-top: 1.5rem;
-            margin-bottom: 0.75rem;
+            font-size: 1.25em;
+            margin-top: 1.4rem;
+            margin-bottom: 0.7rem;
             padding-bottom: 0.35rem;
-            border-bottom: 1px solid rgba(56, 189, 248, 0.2);
+            border-bottom: 2px solid rgba(56, 189, 248, 0.25);
         }
-        .prose-output p { margin-bottom: 0.9rem; }
-        .prose-output ul { list-style-type: disc; padding-inline-start: 1.5rem; margin-bottom: 1rem; }
-        .prose-output ol { list-style-type: decimal; padding-inline-start: 1.5rem; margin-bottom: 1rem; }
-        .prose-output li { margin-bottom: 0.45rem; }
+        .prose-output p { margin-bottom: 0.95rem; }
+        .prose-output ul { list-style-type: disc; padding-inline-start: 1.6rem; margin-bottom: 1rem; }
+        .prose-output ol { list-style-type: decimal; padding-inline-start: 1.6rem; margin-bottom: 1rem; }
+        .prose-output li { margin-bottom: 0.5rem; }
         .prose-output blockquote {
-            background: rgba(14, 165, 233, 0.1);
-            border-inline-start: 4px solid #38bdf8;
-            padding: 12px 16px;
-            border-radius: 10px;
-            margin: 1.1rem 0;
-            color: #f8fafc;
+            background: rgba(14, 165, 233, 0.12);
+            border-inline-start: 5px solid #38bdf8;
+            padding: 14px 18px;
+            border-radius: 12px;
+            margin: 1.2rem 0;
+            font-weight: 700;
+            color: #ffffff;
         }
-        .prose-output table { width: 100%; border-collapse: collapse; margin: 1.2rem 0; border-radius: 10px; overflow: hidden; }
-        .prose-output th, .prose-output td { border: 1px solid #334155; padding: 10px 14px; }
+        .prose-output table { width: 100%; border-collapse: collapse; margin: 1.2rem 0; }
+        .prose-output th, .prose-output td { border: 1px solid #334155; padding: 10px 14px; font-size: 16px; }
         .prose-output th { background: #1e293b; color: #38bdf8; font-weight: 800; }
         .prose-output strong { color: #fde047; font-weight: 800; }
         mjx-container { overflow-x: auto; overflow-y: hidden; max-width: 100%; padding: 4px 2px; }
         mjx-container[display="true"] {
-            background: rgba(15, 23, 42, 0.75);
-            border: 1px solid rgba(148, 163, 184, 0.15);
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid rgba(148, 163, 184, 0.2);
             border-radius: 12px;
             padding: 12px 16px;
             margin: 12px 0 !important;
         }
 
+        /* إعدادات طباعة احترافية تملأ الصفحة بالكامل وبخط كبير دون فراغات */
         @media print {
-            @page { size: A4 landscape; margin: 4mm; }
-            body { background: white !important; color: black !important; }
+            html, body {
+                background: #ffffff !important;
+                color: #000000 !important;
+                width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
             .no-print { display: none !important; }
-            .sheet-scroll-viewport { overflow: visible !important; display: block !important; }
-            .ncm-sheet { box-shadow: none !important; border: none !important; width: 100% !important; min-width: 100% !important; padding: 2mm 4mm !important; }
-            .prose-print-box { background: white !important; color: black !important; border: none !important; box-shadow: none !important; padding: 0 !important; }
-            .prose-output, .prose-output p, .prose-output li { color: #0f172a !important; }
-            .prose-output h1, .prose-output h2, .prose-output h3 { color: #1e3a8a !important; border-bottom-color: #cbd5e1 !important; }
-            .prose-output strong { color: #0f172a !important; text-decoration: underline; }
-            mjx-container[display="true"] { background: #f8fafc !important; border-color: #cbd5e1 !important; }
+            .app-section.active-section {
+                display: block !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+            .sheet-scroll-viewport { overflow: visible !important; display: block !important; width: 100% !important; }
+            .ncm-sheet {
+                box-shadow: none !important;
+                border: none !important;
+                width: 100% !important;
+                min-width: 100% !important;
+                max-width: 100% !important;
+                padding: 2mm 4mm !important;
+            }
+            .prose-print-box {
+                background: #ffffff !important;
+                color: #000000 !important;
+                border: none !important;
+                box-shadow: none !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                width: 100% !important;
+                max-width: 100% !important;
+            }
+            .prose-output {
+                font-size: 13.5pt !important;
+                line-height: 1.75 !important;
+                color: #000000 !important;
+                width: 100% !important;
+            }
+            .prose-output p, .prose-output li, .prose-output td {
+                color: #000000 !important;
+                font-size: 13.5pt !important;
+            }
+            .prose-output h1, .prose-output h2, .prose-output h3 {
+                color: #1e3a8a !important;
+                font-size: 15.5pt !important;
+                border-bottom: 1.5px solid #94a3b8 !important;
+                margin-top: 14pt !important;
+                margin-bottom: 6pt !important;
+                page-break-after: avoid;
+            }
+            .prose-output strong {
+                color: #000000 !important;
+                font-weight: 900 !important;
+            }
+            .prose-output blockquote {
+                background: #f1f5f9 !important;
+                border-inline-start: 4px solid #1e3a8a !important;
+                color: #000000 !important;
+                padding: 10px 14px !important;
+                page-break-inside: avoid;
+            }
+            mjx-container[display="true"] {
+                background: #f8fafc !important;
+                border: 1px solid #cbd5e1 !important;
+                padding: 8px 12px !important;
+                margin: 8px 0 !important;
+                page-break-inside: avoid;
+            }
         }
     </style>
 </head>
 <body class="p-3 md:p-6">
     <div class="max-w-6xl mx-auto no-print mb-6">
-        <!-- ترويسة احترافية نظيفة (مع نقر سري 5 مرات على الشعار لإدارة المفتاح عند الحاجة) -->
         <header class="glass-panel p-4 rounded-3xl flex items-center justify-between gap-4">
             <div class="flex items-center gap-3.5">
                 <div onclick="secretAdminTap()" class="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg cursor-pointer select-none">
@@ -277,7 +364,6 @@ HTML_TEMPLATE = r"""
             </div>
         </header>
 
-        <!-- بطاقات التنقل الأربعة بدون رمز NCM وبمسميات عالمية -->
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3.5">
             <button type="button" onclick="switchSection('ncm')" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-900/90 border border-cyan-500/50 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🗺️</span>
@@ -287,7 +373,7 @@ HTML_TEMPLATE = r"""
             <button type="button" onclick="switchSection('solver')" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🔬</span>
                 <span class="text-xs font-black text-slate-100">المختبر العلمي للمسائل</span>
-                <span class="text-[10px] text-slate-400 font-semibold">برهنة معمّقة • خطوة بخطوة</span>
+                <span class="text-[10px] text-slate-400 font-semibold">برهنة صارمة • بدون اختصار</span>
             </button>
             <button type="button" onclick="switchSection('summarizer')" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">📑</span>
@@ -301,7 +387,6 @@ HTML_TEMPLATE = r"""
             </button>
         </div>
 
-        <!-- نافذة إعداد المفتاح (مخفية ولا تظهر إلا بـ 5 نقرات على الشعار أو عند غياب المفتاح) -->
         <div id="apiModal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
             <div class="glass-panel p-6 rounded-3xl max-w-md w-full border border-blue-500/40">
                 <h3 class="text-base font-bold mb-2 text-cyan-400">إعداد مفتاح الخدمة السحابية (خاص بالمشرف)</h3>
@@ -363,7 +448,7 @@ HTML_TEMPLATE = r"""
 
         <div id="printBar" class="hidden mb-3 flex flex-wrap items-center justify-between gap-2 glass-panel px-4 py-2.5 rounded-2xl no-print">
             <span class="text-xs font-bold text-emerald-400">✅ الخطاطة جاهزة (جميع النصوص قابلة للتعديل المباشر باللمس)</span>
-            <button type="button" onclick="window.print()" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / حفظ PDF</button>
+            <button type="button" onclick="printDocument('landscape')" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / حفظ PDF</button>
         </div>
 
         <div id="sheetWrapper" class="hidden sheet-scroll-viewport">
@@ -397,7 +482,7 @@ HTML_TEMPLATE = r"""
     </div>
 
     <!-- ==================== القسم 2: المختبر التحليلي لحل المسائل ==================== -->
-    <div id="sec-solver" class="app-section max-w-5xl mx-auto">
+    <div id="sec-solver" class="app-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-800">
                 <div>
@@ -405,7 +490,7 @@ HTML_TEMPLATE = r"""
                         <span>🔬</span>
                         <span>المختبر التحليلي لحل المسائل والتمارين العلمية</span>
                     </h2>
-                    <p class="text-xs text-slate-400 mt-0.5">معالجة أكاديمية معمّقة، تأصيل للقواعد والمبرهنات، وبرهنة متدرجة خطوة بخطوة.</p>
+                    <p class="text-xs text-slate-400 mt-0.5">برهنة رياضية وعلمية صارمة 100% بدون اختصار لأي خطوة جبرية أو استدلالية.</p>
                 </div>
             </div>
 
@@ -426,15 +511,15 @@ HTML_TEMPLATE = r"""
                     <div>
                         <label class="block text-[11px] font-bold text-cyan-400 mb-1">المجال العلمي:</label>
                         <select id="solverDomain" class="w-full p-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-white mb-2.5">
-                            <option value="Mathematics (Algebra, Analysis, Geometry, Probability)">📐 الرياضيات والهندسة</option>
-                            <option value="Physics & Chemistry">⚡ الفيزياء والكيمياء</option>
+                            <option value="Higher Mathematics (CPGE MPSI/MP, Algebra, Analysis, Geometry, Probability)">📐 الرياضيات العليا والأقسام التحضيرية</option>
+                            <option value="Physics, Mechanics, Electromagnetism & Chemistry">⚡ الفيزياء والكهرباء والكيمياء</option>
                             <option value="Life & Earth Sciences (SVT) & Engineering">🧬 علوم الحياة والأرض والهندسة</option>
                             <option value="Languages, Grammar & Literature">📖 اللغات والقواعد والتحليل النصي</option>
                         </select>
 
-                        <label class="block text-[11px] font-bold text-cyan-400 mb-1">منهجية ومستوى العمق:</label>
+                        <label class="block text-[11px] font-bold text-cyan-400 mb-1">منهجية ومستوى الصرامة:</label>
                         <select id="solverDepth" class="w-full p-2 rounded-xl bg-slate-800 border border-slate-700 text-xs font-bold text-white mb-2.5">
-                            <option value="deep">🎯 برهان معمّق ومفصل (مواصفات قياسية)</option>
+                            <option value="deep">🎯 برهان أكاديمي صارم ومفصل 100% (دون أي اختصار)</option>
                             <option value="pedagogical">💡 شرح بيداغوجي متدرج مع تبسيط المفاهيم</option>
                             <option value="concise">⚡ حل مركز ومباشر (الخطوات الأساسية)</option>
                         </select>
@@ -451,20 +536,20 @@ HTML_TEMPLATE = r"""
             </div>
 
             <button type="button" onclick="runSmartTool('solver')" id="solverBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 border border-cyan-300/30 font-black text-white text-sm flex items-center justify-center gap-2">
-                <span>بدء التحليل والبرهنة المعمّقة</span>
+                <span>بدء البرهنة الرياضية والعلمية الصارمة</span>
                 <span>🚀</span>
             </button>
         </div>
 
-        <div id="solverResultBox" class="hidden glass-panel rounded-3xl p-6 prose-print-box mb-8">
-            <div class="flex flex-wrap justify-between items-center border-b border-slate-700/80 pb-3 mb-4 no-print gap-2">
+        <div id="solverResultBox" class="hidden glass-panel rounded-3xl p-6 md:p-8 prose-print-box mb-8">
+            <div class="flex flex-wrap justify-between items-center border-b border-slate-700/80 pb-3 mb-5 no-print gap-2">
                 <div class="flex items-center gap-2">
                     <span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>
-                    <span class="text-xs font-black text-emerald-400">التحليل الأكاديمي والحل المنهجي المفصل</span>
+                    <span class="text-xs font-black text-emerald-400">الحل البرهاني الكامل (بخط واضح وتنسيق قياسي للطباعة)</span>
                 </div>
                 <div class="flex gap-2">
                     <button type="button" onclick="copyText('solverOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold text-slate-200">📋 نسخ الحل</button>
-                    <button type="button" onclick="window.print()" class="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-black text-white">🖨️ طباعة / PDF</button>
+                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-black text-white">🖨️ طباعة / حفظ PDF كامل الصفحة</button>
                 </div>
             </div>
             <div id="solverOutput" class="prose-output"></div>
@@ -472,7 +557,7 @@ HTML_TEMPLATE = r"""
     </div>
 
     <!-- ==================== القسم 3: الملخص الأكاديمي الذكي ==================== -->
-    <div id="sec-summarizer" class="app-section max-w-5xl mx-auto">
+    <div id="sec-summarizer" class="app-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <div class="mb-4 pb-3 border-b border-slate-800">
                 <h2 class="text-base md:text-lg font-black text-amber-400 flex items-center gap-2">
@@ -506,12 +591,12 @@ HTML_TEMPLATE = r"""
             </div>
             <button type="button" onclick="runSmartTool('summarizer')" id="summarizerBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 font-black text-slate-950 text-sm">استخلاص الملخص الأكاديمي المهيكل ✨</button>
         </div>
-        <div id="summarizerResultBox" class="hidden glass-panel rounded-3xl p-6 prose-print-box mb-8">
-            <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4 no-print">
+        <div id="summarizerResultBox" class="hidden glass-panel rounded-3xl p-6 md:p-8 prose-print-box mb-8">
+            <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-5 no-print">
                 <span class="text-xs font-black text-amber-400">✅ الملخص الأكاديمي المهيكل</span>
                 <div class="flex gap-2">
                     <button type="button" onclick="copyText('summarizerOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 text-xs font-bold">📋 نسخ</button>
-                    <button type="button" onclick="window.print()" class="px-4 py-1.5 rounded-xl bg-amber-600 text-xs font-bold text-white">🖨️ طباعة / PDF</button>
+                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-amber-600 text-xs font-bold text-white">🖨️ طباعة / حفظ PDF</button>
                 </div>
             </div>
             <div id="summarizerOutput" class="prose-output"></div>
@@ -519,7 +604,7 @@ HTML_TEMPLATE = r"""
     </div>
 
     <!-- ==================== القسم 4: المترجم الأكاديمي الدقيق ==================== -->
-    <div id="sec-translator" class="app-section max-w-5xl mx-auto">
+    <div id="sec-translator" class="app-section max-w-6xl mx-auto">
         <div class="glass-panel rounded-3xl p-6 shadow-2xl mb-6 no-print">
             <div class="mb-4 pb-3 border-b border-slate-800">
                 <h2 class="text-base md:text-lg font-black text-emerald-400 flex items-center gap-2">
@@ -552,12 +637,12 @@ HTML_TEMPLATE = r"""
             </div>
             <button type="button" onclick="runSmartTool('translator')" id="translatorBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 font-black text-white text-sm">ترجمة أكاديمية فورية 🌐</button>
         </div>
-        <div id="translatorResultBox" class="hidden glass-panel rounded-3xl p-6 prose-print-box mb-8">
-            <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-4 no-print">
+        <div id="translatorResultBox" class="hidden glass-panel rounded-3xl p-6 md:p-8 prose-print-box mb-8">
+            <div class="flex justify-between items-center border-b border-slate-700 pb-3 mb-5 no-print">
                 <span class="text-xs font-black text-emerald-400">✅ النص المترجم بالصياغة الأكاديمية</span>
                 <div class="flex gap-2">
                     <button type="button" onclick="copyText('translatorOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 text-xs font-bold">📋 نسخ</button>
-                    <button type="button" onclick="window.print()" class="px-4 py-1.5 rounded-xl bg-emerald-600 text-xs font-bold text-white">🖨️ طباعة / PDF</button>
+                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-emerald-600 text-xs font-bold text-white">🖨️ طباعة / حفظ PDF</button>
                 </div>
             </div>
             <div id="translatorOutput" class="prose-output"></div>
@@ -574,7 +659,16 @@ HTML_TEMPLATE = r"""
         const apiKeyField = document.getElementById('apiKeyInput');
         if (apiKeyField) apiKeyField.value = savedKey;
 
-        // نقرة سرية (5 مرات على شعار القبعة 🎓) لإظهار نافذة مفتاح API للمشرف فقط
+        function printDocument(orientation) {
+            const styleEl = document.getElementById('dynamicPageStyle');
+            if (orientation === 'landscape') {
+                styleEl.innerHTML = '@page { size: A4 landscape; margin: 4mm; }';
+            } else {
+                styleEl.innerHTML = '@page { size: A4 portrait; margin: 10mm; }';
+            }
+            setTimeout(() => { window.print(); }, 80);
+        }
+
         function secretAdminTap() {
             adminTapCounter++;
             clearTimeout(adminTapTimer);
@@ -650,7 +744,7 @@ HTML_TEMPLATE = r"""
                 const img = new Image();
                 img.onload = () => {
                     const canvas = document.createElement('canvas');
-                    const maxDim = 1500;
+                    const maxDim = 1800;
                     let w = img.width, h = img.height;
                     if (w > maxDim || h > maxDim) {
                         if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
@@ -658,7 +752,7 @@ HTML_TEMPLATE = r"""
                     }
                     canvas.width = w; canvas.height = h;
                     canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-                    callback(canvas.toDataURL('image/jpeg', 0.86).split(',')[1], 'image/jpeg');
+                    callback(canvas.toDataURL('image/jpeg', 0.90).split(',')[1], 'image/jpeg');
                 };
                 img.src = e.target.result;
             };
@@ -859,7 +953,7 @@ HTML_TEMPLATE = r"""
             const btn = document.getElementById(toolType + 'Btn');
             const origHtml = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = '<span>⏳ جاري التحليل المعمّق وصياغة الحل...</span>';
+            btn.innerHTML = '<span>⏳ جاري التحليل البرهاني الصارم ومراجعة جميع الخطوات...</span>';
 
             let extraOptions = {};
             if (toolType === 'solver') {
@@ -955,7 +1049,7 @@ lesson_subtitle: "برنامج التعليم الصريح | [عنوان الد�
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
-    raw_text, err = call_gemini_api(api_key, parts, json_mode=True, temperature=0.1)
+    raw_text, err = call_gemini_api(api_key, parts, json_mode=True, temperature=0.1, high_rigor=False)
     if err or not raw_text:
         return jsonify({'error': f'تعذر التوليد: {err}'})
     try:
@@ -995,6 +1089,7 @@ Translate the provided document/image/text into {target_lang} with extreme preci
 1. Preserve the exact academic register, pedagogical terminology, and structure (headings, bullet points, tables).
 2. Keep all mathematical equations and symbols properly formatted in LaTeX ($...$ for inline, $$...$$ for display).
 3. Deliver a clean, publication-ready translation without meta-commentary."""
+        is_rigorous = False
     elif tool == 'summarizer':
         prompt = f"""You are an elite university professor and instructional designer.
 {lang_rule}
@@ -1003,31 +1098,36 @@ Analyze the input thoroughly and produce an executive, deeply structured academi
 2. **المفاهيم والقواعد الأساسية / Concepts et règles clés** : Precise definitions, laws, or formulas (using LaTeX $...$ / $$...$$ if applicable).
 3. **الهيكلة التفصيلية للمحاور / Synthèse structurée par axes** : Clear hierarchical breakdown of all sections.
 4. **خلاصة تركيبية مركزة / Points essentiels à retenir** : High-yield takeaways in a structured table or callout block."""
+        is_rigorous = False
     else:
-        domain = options.get('domain', 'Mathematics & Sciences')
+        domain = options.get('domain', 'Higher Mathematics & Sciences')
         depth = options.get('depth', 'deep')
+        is_rigorous = True
         if depth == 'concise':
-            depth_instruction = "Provide a direct, laser-focused solution showing the essential equations, key steps, and boxed final result without unnecessary prose."
+            depth_instruction = "Provide a direct, laser-focused solution showing every essential equation, exact algebraic transitions, and boxed final result."
         elif depth == 'pedagogical':
-            depth_instruction = "Provide a pedagogical, learner-friendly breakdown explaining the intuition behind each step, why each theorem is chosen, and how to avoid common mistakes."
+            depth_instruction = "Provide a pedagogical, learner-friendly breakdown explaining the intuition behind each step, why each theorem is chosen, and how to avoid common pitfalls."
         else:
-            depth_instruction = """Provide an exhaustive, university/olympiad-grade analytical solution following this exact rigorous architecture for every exercise/question:
-- **1. قراءة تحليلية للمعطيات والمطلوب / Analyse des données et de l'objectif** : Explicitly extract given values, domain of definition/validity, and what must be proved or calculated.
-- **2. التأصيل النظري والقواعد المعتمدة / Cadre théorique et théorèmes utilisés** : State the exact mathematical/scientific theorems, laws, or formulas before applying them.
-- **3. البرهنة والحل المنهجي المفصل / Résolution rigoureuse étape par étape** : Numbered logical steps with zero skipped algebraic or scientific transitions. Format all equations cleanly in LaTeX ($...$ for inline and $$...$$ for standalone equations).
-- **4. النتيجة النهائية والتحقق / Conclusion et vérification** : Place the final answer inside a Markdown blockquote (`>`) with bold formatting and proper units, and verify its mathematical/physical consistency.
-- **5. إضاءة منهجية / Astuce méthodologique** : A sharp, focused expert insight on the method used."""
+            depth_instruction = """STRICT CPGE / AGRÉGATION MATHEMATICAL & SCIENTIFIC RIGOR PROTOCOL (ZERO-ERROR TOLERANCE):
+1. **ZERO HESITATION OR SELF-CORRECTION IN OUTPUT**: Never write internal monologue, doubts, or corrections in the text (e.g., NEVER write "Attention...", "Précisons...", "Attendez...", "Corrigeons..."). Verify the exact bounds of sums, indices, and hypotheses silently BEFORE writing the clean, definitive proof.
+2. **ZERO HAND-WAVING OR SKIPPED STEPS**: It is strictly FORBIDDEN to skip proofs at the end of an exercise using phrases like "on vérifie facilement", "on obtient directement par Cauchy-Schwarz", or "par sous-additivité". You MUST write out every intermediate algebraic substitution, index shift, quantifier ($\forall, \exists$), and inequality step-by-step from start to finish.
+   - When proving an inequality involving an $\inf$ (e.g., $(a\|c)x^2 + (b\|d)x^2 \le ((a+b)\|(c+d))x^2$), explicitly take any $(y,z)\in\mathbb{R}^2$ such that $y+z=x$, write $(a\|c)x^2 \le ay^2 + cz^2$ and $(b\|d)x^2 \le by^2 + dz^2$, sum the two inequalities to get $(a\|c + b\|d)x^2 \le (a+b)y^2 + (c+d)z^2$, and then pass to the infimum over $(y,z)$ satisfying $y+z=x$.
+   - When applying Cauchy-Schwarz or induction on $k$ terms, write the explicit vectors/terms and the complete algebraic chain.
+3. **MANDATORY STRUCTURE FOR EACH EXERCISE**:
+   - **1. قراءة تحليلية للمعطيات والمطلوب / Cadre formel et objectif** : Exact definitions and hypotheses.
+   - **2. التأصيل النظري والمبرهنات / Théorèmes et lemmes de référence** : Exact formulas used.
+   - **3. البرهنة المنهجية المفصلة / Démonstration rigoureuse question par question** : Solve EVERY single question and sub-question (1, 2, 3, 4, 5, 6...) with 100% completeness, giving the last questions the exact same depth and detail as the first question. Use clean LaTeX ($...$ inline, $$...$$ display). Put final results of each question in a Markdown blockquote (`>`).
+   - **4. إضاءة منهجية / Synthèse méthodologique** : Brief high-level mathematical insight."""
 
-        prompt = f"""You are an elite Professor of {domain} and master problem solver.
+        prompt = f"""You are a Chair Professor of {domain} (Professeur de Chaire Supérieure CPGE MPSI/MP* & Jury d'Agrégation).
 {lang_rule}
-{depth_instruction}
-If the input image or text contains multiple questions/sub-questions (e.g., 1, 2, a, b), solve EVERY SINGLE ONE of them completely and systematically."""
+{depth_instruction}"""
 
-    parts = [{"text": prompt + "\n\nInput Content:\n" + (text[:35000] if text else "Carefully transcribe and process the attached image/document.")}]
+    parts = [{"text": prompt + "\n\nInput Content:\n" + (text[:35000] if text else "Transcribe every symbol, index, and bound of the attached document with 100% accuracy and solve every question completely.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
-    raw_text, err = call_gemini_api(api_key, parts, json_mode=False, temperature=0.12)
+    raw_text, err = call_gemini_api(api_key, parts, json_mode=False, temperature=0.05 if is_rigorous else 0.15, high_rigor=is_rigorous)
     if err or not raw_text:
         return jsonify({'error': f'خطأ: {err}'})
     return jsonify({'result': raw_text})
