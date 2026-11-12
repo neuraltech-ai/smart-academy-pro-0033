@@ -119,6 +119,35 @@ def parse_filename_metadata(filename):
     if ncm: meta['ncm'] = ncm.group(1)
     return meta
 
+def sanitize_ncm_data(res_json):
+    """تصحيح تلقائي لأي تشوه بصري في أرقام المدد الزمنية (مثل 150 د -> 15 د أو 255 د -> 25 د)"""
+    is_fr = (res_json.get('lang') or '').lower() == 'fr'
+    unit = "min" if is_fr else "د"
+    stations = res_json.get('stations') or []
+    for st in stations:
+        raw_dur = str(st.get('duration') or '').strip()
+        # تحويل الأرقام الهندية إن وجدت إلى أرقام عربية قياسية
+        trans = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
+        clean_dur = raw_dur.translate(trans)
+        nums = re.findall(r'\d+', clean_dur)
+        if nums:
+            val = int(nums[0])
+            # إذا قرأ المحرك حرف (د) كأنه 0 أو 5 في نهاية الرقم (مثل 150، 200، 255، 405، 100)
+            if val >= 60:
+                if val >= 100:
+                    val = val // 10
+                else:
+                    val = 15
+            # تقريب لأقرب مدة بيداغوجية منطقية إذا كانت غير قياسية
+            if val > 45:
+                val = 20
+            if val < 3:
+                val = 5
+            st['duration'] = f"{val} {unit}"
+        else:
+            st['duration'] = f"10 {unit}"
+    return res_json
+
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
     candidate_models = get_available_models(api_key, high_rigor=high_rigor)
     gen_config = {
@@ -168,7 +197,7 @@ HTML_TEMPLATE = r"""
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     <style id="dynamicPageStyle">
-        @page { size: A4 portrait; margin: 10mm; }
+        @page { size: A4 landscape; margin: 0mm; }
     </style>
     <style>
         body {
@@ -214,121 +243,187 @@ HTML_TEMPLATE = r"""
         .cta-btn:hover { filter: brightness(1.07); }
         .cta-btn:active { transform: scale(0.985); }
 
-        /* تصميم الخطاطة الرسمي المعتمد */
-        .sheet-scroll-viewport { width: 100%; overflow-x: auto; padding-bottom: 14px; display: flex; justify-content: center; }
+        /* لوحة خطاطة A4 Paysage قياسية (صفحة واحدة ممتلئة 100% بدون أي فراغ أو انقسام) */
+        .sheet-scroll-viewport {
+            width: 100%;
+            overflow-x: auto;
+            padding-bottom: 14px;
+            display: flex;
+            justify-content: center;
+        }
         .ncm-sheet {
             background: #ffffff;
             color: #0f172a;
-            border-radius: 16px;
-            padding: 18px 22px;
+            border-radius: 14px;
+            padding: 14px 18px;
             box-shadow: 0 25px 60px rgba(0,0,0,0.6);
             width: 1122px;
             min-width: 1122px;
             max-width: 1122px;
+            height: 793px;
+            min-height: 793px;
+            max-height: 793px;
             margin: 0 auto;
             position: relative;
             border: 1px solid #cbd5e1;
             box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            overflow: hidden;
         }
         .ncm-top-banner {
             background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 100%);
             color: white;
-            border-radius: 12px;
-            padding: 12px 20px;
+            border-radius: 10px;
+            padding: 9px 18px;
             display: flex;
             align-items: center;
             justify-content: space-between;
-            gap: 16px;
-            margin-bottom: 10px;
-            border-bottom: 4px solid #f59e0b;
+            gap: 14px;
+            margin-bottom: 7px;
+            border-bottom: 3.5px solid #f59e0b;
+            flex-shrink: 0;
         }
         .ncm-orange-badge {
             background: linear-gradient(180deg, #f97316 0%, #ea580c 100%);
             color: white;
-            border-radius: 10px;
-            padding: 6px 16px;
+            border-radius: 9px;
+            padding: 5px 14px;
             text-align: center;
-            min-width: 96px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            min-width: 90px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.22);
             border: 1.5px solid rgba(255,255,255,0.45);
             flex-shrink: 0;
         }
         .ncm-objectives-box {
             background: #f8fafc;
             border: 1.5px solid #cbd5e1;
-            border-right: 6px solid #2563eb;
-            border-radius: 10px;
-            padding: 9px 16px;
-            margin-bottom: 14px;
-            font-size: 13.5px;
-            line-height: 1.6;
+            border-right: 5px solid #2563eb;
+            border-radius: 9px;
+            padding: 7px 14px;
+            margin-bottom: 9px;
+            font-size: 12.5px;
+            line-height: 1.5;
+            flex-shrink: 0;
         }
         [dir="ltr"] .ncm-objectives-box {
             border-right: 1.5px solid #cbd5e1;
-            border-left: 6px solid #2563eb;
+            border-left: 5px solid #2563eb;
         }
 
-        .mindmap-container { position: relative; z-index: 1; width: 100%; padding: 4px 0; }
-        #pathSvg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+        .mindmap-container {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            flex: 1;
+            display: flex;
+            align-items: stretch;
+            min-height: 0;
+        }
+        #pathSvg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+        /* توازن ثلاثي متساوي العرض والارتفاع لمنع التمدد العمودي */
         .ncm-grid-layout {
             position: relative;
             z-index: 2;
+            width: 100%;
+            height: 100%;
             display: grid;
-            grid-template-columns: 1fr 246px 1fr;
-            gap: 26px;
-            align-items: center;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 18px;
+            align-items: stretch;
+        }
+        .ncm-col {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 10px;
+            height: 100%;
+            min-height: 0;
+        }
+        .ncm-col-center {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: stretch;
+            gap: 8px;
+            height: 100%;
+            min-height: 0;
+        }
+        .ncm-col-center.only-hub {
+            justify-content: center;
         }
 
         .station-box {
             background: #ffffff;
             border: 1.5px solid #cbd5e1;
-            border-radius: 12px;
+            border-radius: 11px;
             overflow: hidden;
-            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.07);
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
             display: flex;
             flex-direction: column;
-            height: auto;
+            flex: 1;
+            min-height: 0;
         }
         .station-header-bar {
             color: white;
-            padding: 8px 14px;
+            padding: 6px 12px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 8px;
             font-weight: 800;
-            font-size: 13.5px;
+            font-size: var(--st-title-size, 13px);
+            flex-shrink: 0;
         }
         .station-time-tag {
             background: rgba(0,0,0,0.28);
             color: #ffffff;
-            padding: 2px 10px;
+            padding: 1.5px 9px;
             border-radius: 999px;
-            font-size: 11.5px;
+            font-size: 11px;
             font-weight: 800;
-            border: 1px solid rgba(255,255,255,0.4);
+            border: 1px solid rgba(255,255,255,0.45);
             white-space: nowrap;
             flex-shrink: 0;
         }
         .station-content-body {
-            padding: 10px 14px;
-            font-size: 12.8px;
-            line-height: 1.65;
+            padding: 8px 12px;
+            font-size: var(--st-body-size, 12px);
+            line-height: var(--st-line-height, 1.52);
             background: #ffffff;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
         }
 
-        .center-hub-box { display: flex; align-items: center; justify-content: center; padding: 6px; }
+        .center-hub-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2px;
+            flex-shrink: 0;
+        }
         .center-blue-circle {
-            width: 222px;
-            height: 222px;
+            width: var(--hub-size, 196px);
+            height: var(--hub-size, 196px);
             border-radius: 50%;
             background: radial-gradient(circle at 35% 30%, #2563eb 0%, #1e3a8a 92%);
             color: white;
-            padding: 14px;
+            padding: 10px;
             text-align: center;
-            border: 5px solid #ffffff;
-            outline: 3.5px solid #2563eb;
-            box-shadow: 0 12px 30px rgba(37, 99, 235, 0.35);
+            border: 4px solid #ffffff;
+            outline: 3px solid #2563eb;
+            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.32);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -384,7 +479,6 @@ HTML_TEMPLATE = r"""
             html, body {
                 background: #ffffff !important;
                 color: #000000 !important;
-                width: 100% !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 -webkit-print-color-adjust: exact !important;
@@ -398,14 +492,39 @@ HTML_TEMPLATE = r"""
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            .sheet-scroll-viewport { overflow: visible !important; display: block !important; width: 100% !important; }
-            .ncm-sheet {
+            /* ضمان طباعة الخطاطة في صفحة واحدة A4 Paysage بنسبة 100% بدون صفحة ثانية */
+            body.printing-ncm, body.printing-ncm html {
+                width: 297mm !important;
+                height: 209mm !important;
+                max-height: 209mm !important;
+                overflow: hidden !important;
+            }
+            body.printing-ncm .sheet-scroll-viewport {
+                overflow: hidden !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                width: 297mm !important;
+                height: 209mm !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                page-break-after: avoid !important;
+                page-break-inside: avoid !important;
+            }
+            body.printing-ncm .ncm-sheet {
                 box-shadow: none !important;
                 border: none !important;
-                width: 100% !important;
-                min-width: 100% !important;
-                max-width: 100% !important;
-                padding: 2mm 4mm !important;
+                border-radius: 0 !important;
+                width: 297mm !important;
+                min-width: 297mm !important;
+                max-width: 297mm !important;
+                height: 209mm !important;
+                min-height: 209mm !important;
+                max-height: 209mm !important;
+                padding: 5mm 7mm !important;
+                margin: 0 !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
             }
             .prose-print-box {
                 background: #ffffff !important;
@@ -554,26 +673,26 @@ HTML_TEMPLATE = r"""
             </div>
 
             <button type="button" onclick="generateNCM()" id="ncmGenBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 border border-cyan-300/30 font-black text-white text-sm tracking-wide flex items-center justify-center gap-2">
-                <span>إنشاء خطاطة الدرس</span>
+                <span>إنشاء خطاطة الدرس (صفحة A4 أفقية واحدة)</span>
                 <span class="text-base">⚡</span>
             </button>
         </div>
 
         <div id="printBar" class="hidden mb-3 flex flex-wrap items-center justify-between gap-2 glass-panel px-4 py-2.5 rounded-2xl no-print">
-            <span class="text-xs font-bold text-emerald-400">✅ الخطاطة جاهزة (يمكنك النقر على أي نص لتعديله مباشرة)</span>
-            <button type="button" onclick="printDocument('landscape')" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / حفظ PDF</button>
+            <span class="text-xs font-bold text-emerald-400">✅ الخطاطة مضبوطة في صفحة A4 Paysage واحدة (قابلة للتعديل باللمس)</span>
+            <button type="button" onclick="printDocument('landscape')" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / حفظ PDF في صفحة واحدة</button>
         </div>
 
         <div id="sheetWrapper" class="hidden sheet-scroll-viewport">
             <div id="ncmSheet" class="ncm-sheet" dir="rtl">
                 <div class="ncm-top-banner">
                     <div class="flex-1">
-                        <div id="hdrTitle" contenteditable="true" class="text-base font-black text-white leading-snug mb-1"></div>
+                        <div id="hdrTitle" contenteditable="true" class="text-[15px] font-black text-white leading-snug mb-0.5"></div>
                         <div id="hdrSub" contenteditable="true" class="text-xs font-bold text-amber-200"></div>
                     </div>
                     <div class="ncm-orange-badge">
                         <div id="hdrBadgeLabel" class="text-[10px] font-bold uppercase opacity-95">خطاطة رقم</div>
-                        <div id="hdrBadgeNum" contenteditable="true" class="text-2xl font-black leading-none mt-0.5">10</div>
+                        <div id="hdrBadgeNum" contenteditable="true" class="text-xl font-black leading-none mt-0.5">10</div>
                     </div>
                 </div>
 
@@ -585,9 +704,9 @@ HTML_TEMPLATE = r"""
                 <div id="mindmapContainer" class="mindmap-container">
                     <svg id="pathSvg"></svg>
                     <div class="ncm-grid-layout">
-                        <div id="colFirst" class="flex flex-col justify-center gap-3.5"></div>
-                        <div id="colCenter" class="flex flex-col items-center justify-center gap-3.5"></div>
-                        <div id="colLast" class="flex flex-col justify-center gap-3.5"></div>
+                        <div id="colFirst" class="ncm-col"></div>
+                        <div id="colCenter" class="ncm-col-center"></div>
+                        <div id="colLast" class="ncm-col"></div>
                     </div>
                 </div>
             </div>
@@ -763,7 +882,7 @@ HTML_TEMPLATE = r"""
     </div>
 
     <script>
-        let stationsCount = 0; // 0 = استخراج تلقائي دقيق لعدد المحطات الفعلي من الدرس
+        let stationsCount = 0;
         let ncmBase64 = null, ncmMime = null, ncmUploadedFilename = '';
         let toolFiles = { solver: {}, summarizer: {}, translator: {} };
         let adminTapCounter = 0, adminTapTimer = null;
@@ -772,14 +891,50 @@ HTML_TEMPLATE = r"""
         const apiKeyField = document.getElementById('apiKeyInput');
         if (apiKeyField) apiKeyField.value = savedKey;
 
+        function fitNcmToSinglePage() {
+            const sheet = document.getElementById('ncmSheet');
+            if (!sheet) return;
+            const cardsCount = sheet.querySelectorAll('.station-box').length;
+            let bodySize = cardsCount >= 5 ? 11.5 : 12.5;
+            let titleSize = cardsCount >= 5 ? 12.5 : 13.5;
+            let lineHeight = cardsCount >= 5 ? 1.44 : 1.55;
+            let hubSize = cardsCount >= 5 ? 164 : 196;
+
+            sheet.style.setProperty('--st-body-size', bodySize + 'px');
+            sheet.style.setProperty('--st-title-size', titleSize + 'px');
+            sheet.style.setProperty('--st-line-height', lineHeight);
+            sheet.style.setProperty('--hub-size', hubSize + 'px');
+
+            // تقليص تدريجي دقيق إذا كان المحتوى الداخلي أطول من ارتفاع صفحة A4 Paysage (793px)
+            for (let step = 0; step < 8; step++) {
+                const anyOverflow = Array.from(sheet.querySelectorAll('.station-box')).some(b => b.scrollHeight > b.clientHeight + 4);
+                if (!anyOverflow && sheet.scrollHeight <= 793) break;
+                bodySize = Math.max(9.8, bodySize - 0.4);
+                titleSize = Math.max(11.0, titleSize - 0.3);
+                lineHeight = Math.max(1.30, lineHeight - 0.04);
+                hubSize = Math.max(142, hubSize - 6);
+                sheet.style.setProperty('--st-body-size', bodySize + 'px');
+                sheet.style.setProperty('--st-title-size', titleSize + 'px');
+                sheet.style.setProperty('--st-line-height', lineHeight);
+                sheet.style.setProperty('--hub-size', hubSize + 'px');
+            }
+            drawConnectors();
+        }
+
         function printDocument(orientation) {
             const styleEl = document.getElementById('dynamicPageStyle');
             if (orientation === 'landscape') {
-                styleEl.innerHTML = '@page { size: A4 landscape; margin: 4mm; }';
+                document.body.classList.add('printing-ncm');
+                styleEl.innerHTML = '@page { size: 297mm 210mm; margin: 0mm; }';
+                fitNcmToSinglePage();
             } else {
+                document.body.classList.remove('printing-ncm');
                 styleEl.innerHTML = '@page { size: A4 portrait; margin: 10mm; }';
             }
-            setTimeout(() => { window.print(); }, 80);
+            setTimeout(() => {
+                window.print();
+                setTimeout(() => { document.body.classList.remove('printing-ncm'); }, 500);
+            }, 120);
         }
 
         function secretAdminTap() {
@@ -809,7 +964,7 @@ HTML_TEMPLATE = r"""
             const activeCard = document.getElementById('card-' + secId);
             if (activeCard) activeCard.classList.add('active');
 
-            if (secId === 'ncm') setTimeout(drawConnectors, 60);
+            if (secId === 'ncm') setTimeout(fitNcmToSinglePage, 60);
         }
 
         function setStations(num) {
@@ -943,7 +1098,7 @@ HTML_TEMPLATE = r"""
             const btn = document.getElementById('ncmGenBtn');
             const origHtml = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = '<span>⏳ جاري قراءة الدرس واستخراج المحطات...</span>';
+            btn.innerHTML = '<span>⏳ جاري قراءة الدرس وضبط المحطات والمدد الزمنية...</span>';
             try {
                 const res = await fetch('/generate_ncm', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -972,7 +1127,7 @@ HTML_TEMPLATE = r"""
             const color = stationColors[idx % stationColors.length];
             const cleanTitle = (st.title || '').replace(/^\d+[\.\-\s]*/, '');
             const bulletsHtml = (st.bullets || []).map(b => `
-                <li class="mb-1.5 flex items-start gap-2">
+                <li class="mb-1 flex items-start gap-1.5">
                     <span style="color: ${color};" class="font-black mt-0.5">▪</span>
                     <div contenteditable="true">
                         ${b.label ? `<strong class="text-slate-900 font-extrabold">${b.label} : </strong>` : ''}
@@ -987,7 +1142,7 @@ HTML_TEMPLATE = r"""
             const tag1 = isFr ? "Enseignement Explicite" : "التعليم الصريح";
             const tag2 = isFr ? "École Pionnière" : "المدرسة الرائدة";
             const seanceBadge = d.seance_ncm_badge || (isFr ? `Séance (Fiche ${d.ncm_number || ncmNum})` : `خطاطة رقم (${d.ncm_number || ncmNum})`);
-            return `<div class="center-hub-box"><div id="centralHub" class="center-blue-circle"><div class="text-[11px] font-extrabold text-amber-300 tracking-wide mb-0.5">${tag1}</div><div class="text-[11px] font-bold text-white mb-1.5 opacity-95">${tag2}</div><div contenteditable="true" class="text-sm md:text-base font-black text-white bg-white/20 py-1 px-4 rounded-full mb-1.5 border border-white/30 shadow-inner">${d.subject_level || ''}</div><div contenteditable="true" class="text-[11px] font-bold text-slate-100 mb-1.5 leading-tight">${d.unit_week || ''}</div><div contenteditable="true" class="text-xs font-black text-amber-300 bg-amber-500/25 border border-amber-300/40 px-3 py-0.5 rounded-full mb-1">${seanceBadge}</div>${d.livret_pages ? `<div contenteditable="true" class="text-[10.5px] font-semibold text-cyan-200 bg-black/30 py-0.5 px-2.5 rounded-full">${d.livret_pages}</div>` : ''}</div></div>`;
+            return `<div class="center-hub-box"><div id="centralHub" class="center-blue-circle"><div class="text-[10.5px] font-extrabold text-amber-300 tracking-wide mb-0.5">${tag1}</div><div class="text-[10.5px] font-bold text-white mb-1 opacity-95">${tag2}</div><div contenteditable="true" class="text-xs md:text-sm font-black text-white bg-white/20 py-0.5 px-3 rounded-full mb-1 border border-white/30 shadow-inner leading-snug">${d.subject_level || ''}</div><div contenteditable="true" class="text-[10.5px] font-bold text-slate-100 mb-1 leading-tight">${d.unit_week || ''}</div><div contenteditable="true" class="text-[11px] font-black text-amber-300 bg-amber-500/25 border border-amber-300/40 px-2.5 py-0.5 rounded-full mb-0.5">${seanceBadge}</div>${d.livret_pages ? `<div contenteditable="true" class="text-[10px] font-semibold text-cyan-200 bg-black/30 py-0.5 px-2.5 rounded-full">${d.livret_pages}</div>` : ''}</div></div>`;
         }
 
         function drawConnectors() {
@@ -1018,11 +1173,11 @@ HTML_TEMPLATE = r"""
                 const dPath = Math.abs(cx - hx) > 80 ? `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${targetY}, ${targetX} ${targetY}` : `M ${startX} ${startY} L ${targetX} ${targetY}`;
 
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                path.setAttribute('d', dPath); path.setAttribute('stroke', color); path.setAttribute('stroke-width', '2.8'); path.setAttribute('stroke-dasharray', '6,5'); path.setAttribute('fill', 'none');
+                path.setAttribute('d', dPath); path.setAttribute('stroke', color); path.setAttribute('stroke-width', '2.5'); path.setAttribute('stroke-dasharray', '5,4'); path.setAttribute('fill', 'none');
                 svg.appendChild(path);
 
                 const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                dot.setAttribute('cx', targetX); dot.setAttribute('cy', targetY); dot.setAttribute('r', '4.5'); dot.setAttribute('fill', color);
+                dot.setAttribute('cx', targetX); dot.setAttribute('cy', targetY); dot.setAttribute('r', '4'); dot.setAttribute('fill', color);
                 svg.appendChild(dot);
             });
         }
@@ -1044,17 +1199,21 @@ HTML_TEMPLATE = r"""
             const colCenter = document.getElementById('colCenter');
             const colLast = document.getElementById('colLast');
             colFirst.innerHTML = ''; colCenter.innerHTML = ''; colLast.innerHTML = '';
+            colCenter.classList.remove('only-hub');
             const hubHtml = createCenterHub(d, isFr, d.ncm_number || ncmNum);
 
             if (stations.length === 2) {
+                colCenter.classList.add('only-hub');
                 colFirst.innerHTML = createStationCard(stations[0], 0);
                 colCenter.innerHTML = hubHtml;
                 colLast.innerHTML = createStationCard(stations[1], 1);
             } else if (stations.length === 3) {
+                colCenter.classList.add('only-hub');
                 colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
                 colCenter.innerHTML = hubHtml;
                 colLast.innerHTML = createStationCard(stations[2], 2);
             } else if (stations.length === 4) {
+                colCenter.classList.add('only-hub');
                 colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
                 colCenter.innerHTML = hubHtml;
                 colLast.innerHTML = createStationCard(stations[2], 2) + createStationCard(stations[3], 3);
@@ -1070,7 +1229,10 @@ HTML_TEMPLATE = r"""
 
             document.getElementById('printBar').classList.remove('hidden');
             document.getElementById('sheetWrapper').classList.remove('hidden');
-            setTimeout(() => { drawConnectors(); document.getElementById('sheetWrapper').scrollIntoView({ behavior: 'smooth' }); }, 120);
+            setTimeout(() => {
+                fitNcmToSinglePage();
+                document.getElementById('sheetWrapper').scrollIntoView({ behavior: 'smooth' });
+            }, 100);
         }
 
         async function runSmartTool(toolType) {
@@ -1116,7 +1278,7 @@ HTML_TEMPLATE = r"""
             navigator.clipboard.writeText(document.getElementById(elId).innerText);
             alert('تم نسخ المحتوى بنجاح.');
         }
-        window.addEventListener('resize', drawConnectors);
+        window.addEventListener('resize', fitNcmToSinglePage);
     </script>
 </body>
 </html>
@@ -1162,40 +1324,40 @@ def generate_ncm():
         station_rule = (
             f"Divise la séance en EXACTEMENT {stations} stations méthodologiques correspondant aux étapes clés du cours."
             if stations > 0 else
-            "Détecte et extrais EXACTEMENT toutes les étapes/stations réelles présentes dans le support de cours (généralement entre 4 et 6 stations : ex. Ouverture de la séance / Mise en situation, Modelage / Découverte, Pratique guidée / Entraînement, Pratique autonome / Application, Clôture / Synthèse)."
+            "Détecte et extrais EXACTEMENT toutes les étapes/stations réelles présentes dans le support de cours (entre 4 et 6 stations : ex. Ouverture / Activités rituelles, Mise en situation / Modelage, Pratique guidée, Pratique autonome, Clôture)."
         )
         system_prompt = f"""Tu es un inspecteur pédagogique expert de l'Enseignement Explicite (École Pionnière au Maroc).
-Analyse minutieusement le contenu du cours ci-joint et extrais toutes les informations avec une fidélité absolue :
+Analyse minutieusement le contenu du cours ci-joint et conçois une fiche méthodologique complète qui tient sur UNE SEULE page A4 paysage :
 1. RÈGLE DE LANGUE : Réponds 100% en FRANÇAIS ("lang": "fr"). Zéro mot en arabe.
-2. MÉTADONNÉES EXACTES : Extrais du document (ou utilise les valeurs fournies : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
+2. MÉTADONNÉES EXACTES (Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
    - header_title : "[Matière / Composante] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
    - lesson_subtitle : "Enseignement explicite | [Titre exact de la leçon] (Livret : p. [numéro exact de page si mentionné])"
-   - objectives : Les objectifs d'apprentissage exacts formulés dans la leçon.
-3. STATIONS, NOMS ET DURÉES EXACTES :
+   - objectives : Les objectifs d'apprentissage exacts formulés de manière concise.
+3. STATIONS, CONTENU PÉDAGOGIQUE RICHE ET DURÉES RÉELLES :
    - {station_rule}
-   - Pour chaque station, extrais son **nom officiel exact** dans le cours et sa **durée exacte en minutes** (ex: "5 min", "10 min", "15 min"). Si une durée n'est pas écrite explicitement sur une diapositive, répartis logiquement les 45 ou 55 minutes de la séance selon le standard de l'Enseignement Explicite.
-   - Dans chaque station, résume les actions de l'enseignant, les tâches des élèves, les exemples clés et les supports sous forme de puces structurées ("label" : "text").
+   - RÈGLE STRICTE SUR LES DURÉES : La durée de chaque station DOIT être un nombre réaliste compris entre **5 min et 30 min** (ex: "5 min", "10 min", "15 min", "20 min"). N'écris JAMAIS des nombres aberrants comme 100 min ou 150 min !
+   - CONTENU DE CHAQUE STATION : Rédige exactement **3 à 4 puces pédagogiques denses et précises** ("label" : "text", 12 à 20 mots par puce) contenant les sous-étapes exactes, les exemples concrets du support (mots, phrases, calculs, pages du livret), le rôle de l'enseignant (modelage, questionnement, vérification) et la tâche des élèves (ardoises, livret, travail en binôme).
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (Fiche {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"10 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (Fiche {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
     else:
         station_rule = (
             f"قسّم الحصة إلى ({stations}) محطات منهجية بالضبط تغطي كافة مراحل الدرس."
             if stations > 0 else
-            "استخرج بدقة جميع المحطات والمراحل الفعلية الواردة في ملف الدرس (عادة ما بين 4 إلى 6 محطات في التعليم الصريح، مثل: افتتاح الحصة / التهيئة، النمذجة، الممارسة الموجهة، الممارسة المستقلة، اختتام الحصة)."
+            "استخرج بدقة جميع المحطات والمراحل الفعلية الواردة في ملف الدرس (بين 4 إلى 6 محطات حسب بنية الحصة في المدرسة الرائدة)."
         )
         system_prompt = f"""أنت مفتش وخبير بيداغوجي في برنامج التعليم الصريح بالمدرسة الرائدة بالمغرب.
-حلّل محتوى الدرس المرفق بدقة متناهية واستخرج جميع عناصره بأمانة تامة:
+حلّل محتوى الدرس المرفق بدقة متناهية وصمّم خطاطة بيداغوجية احترافية مصممة لتتسع في **صفحة A4 أفقية واحدة** دون أي إخلال بالمضمون:
 1. قاعدة اللغة: رد باللغة العربية الفصحى 100% ("lang": "ar").
-2. استخراج بيانات الترويسة الدقيقة من الملف (مع الاستئناس بالمعطيات المتوفرة: المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
+2. استخراج بيانات الترويسة الدقيقة من الملف (المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
    - header_title: "[المادة والمكون] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
-   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس] (الكراسة: ص. [رقم الصفحة الدقيق إن وجد])"
-   - objectives: أهداف التعلم الدقيقة المسطرة في الدرس.
-3. المحطات، أسماؤها، ومددها الزمنية الدقيقة:
+   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس] (الكراسة: ص. [رقم الصفحة الدقيق])"
+   - objectives: أهداف التعلم الدقيقة للحصة مصاغة بتركيز ووضوح.
+3. المحطات، المضمون البيداغوجي الدقيق، والمدد الزمنية المضبوطة:
    - {station_rule}
-   - لكل محطة، استخرج **اسمها الرسمي الدقيق** كما ورد في الشرائح أو الجذاذة، و**مدتها الزمنية الدقيقة بالدقائق** (مثال: "5 د"، "10 د"، "15 د"). في حال عدم ذكر المدة نصياً في الشريحة، قدّر المدة القانونية المناسبة لها ضمن زمن الحصة (45 أو 55 دقيقة).
-   - داخل كل محطة، لخّص بدقة ووضوح مهام الأستاذ، أنشطة المتعلمين، الأمثلة التطبيقية، والتقويم على شكل نقاط مهيكلة ("label": "text").
+   - قاعدة صارمة للمدد الزمنية: انتبه من تشوه الحروف في الشرائح حيث قد تظهر «15 د» على شكل «150» أو «25 د» على شكل «255»! يجب أن تكون مدة كل محطة رقماً واقعياً مضبوطاً بين **5 دقائق و 30 دقيقة فقط** (مثال: "5 د"، "10 د"، "15 د"، "20 د"، "25 د") بحيث يتناسب مجموعها مع الزمن الفعلي للحصة. يُمنع منعاً باتاً كتابة أرقام مثل 100 د أو 150 د!
+   - المضمون البيداغوجي لكل محطة: اكتب داخل كل محطة **3 إلى 4 نقاط بيداغوجية مركزة وغنية** ("label": "text"، بحدود 12 إلى 20 كلمة للنقطة الواحدة) تشمل: الخطوات الفرعية الدقيقة للمحطة (أو تفصيل المستويين الأول والثاني في الأقسام المشتركة)، الأمثلة والكلمات أو الجمل الحقيقية الواردة في الشرائح، أرقام صفحات الكراسة، ومهام الأستاذ والمتعلمين (على الألواح، العمل الثنائي، الكراسة، التحقق من الفهم).
 أرجع JSON صالحاً فقط:
-{{"lang":"ar","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"10 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"ar","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
 
     parts = [{"text": system_prompt + "\n\nLesson Content:\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly.")}]
     if file_b64 and mime_type:
@@ -1206,6 +1368,7 @@ Retourne UNIQUEMENT un objet JSON valide :
         return jsonify({'error': f'تعذر التوليد: {err}'})
     try:
         res_json = json.loads(re.search(r'\{[\s\S]*\}', raw_text).group(0))
+        res_json = sanitize_ncm_data(res_json)
         if stations > 0 and 'stations' in res_json:
             res_json['stations'] = res_json['stations'][:stations]
         return jsonify({'result': res_json})
