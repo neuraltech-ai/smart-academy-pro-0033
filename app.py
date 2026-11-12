@@ -105,13 +105,18 @@ def parse_filename_metadata(filename):
     if not filename:
         return meta
     fn = filename.upper()
-    lvl = re.search(r'(?:N|NIVEAU|AEP)[_-]?(\d)', fn) or re.search(r'(\d)AEP', fn)
+    # دعم الأقسام المشتركة مثل N1&2 أو N1_2 أو 1+2
+    lvl_joint = re.search(r'(?:N|NIVEAU|AEP)[_-]?(\d\s*[\&\+\-]\s*\d)', fn)
+    lvl_single = re.search(r'(?:N|NIVEAU|AEP)[_-]?(\d)', fn) or re.search(r'(\d)AEP', fn)
     per = re.search(r'P(\d)', fn)
     uni = re.search(r'U(\d)', fn)
     sem = re.search(r'SEM[_-]?(\d+)', fn) or re.search(r'W(\d+)', fn)
     sea = re.search(r'_S(\d+)', fn) or re.search(r'SEANCE[_-]?(\d+)', fn)
     ncm = re.search(r'NCM[_-]?(\d+)', fn)
-    if lvl: meta['level'] = lvl.group(1)
+    if lvl_joint:
+        meta['level'] = re.sub(r'[\&\-\s]+', '+', lvl_joint.group(1))
+    elif lvl_single:
+        meta['level'] = lvl_single.group(1)
     if per: meta['periode'] = per.group(1)
     if uni: meta['unite'] = uni.group(1)
     if sem: meta['semaine'] = sem.group(1)
@@ -120,25 +125,18 @@ def parse_filename_metadata(filename):
     return meta
 
 def sanitize_ncm_data(res_json):
-    """تصحيح تلقائي لأي تشوه بصري في أرقام المدد الزمنية (مثل 150 د -> 15 د أو 255 د -> 25 د)"""
     is_fr = (res_json.get('lang') or '').lower() == 'fr'
     unit = "min" if is_fr else "د"
     stations = res_json.get('stations') or []
     for st in stations:
         raw_dur = str(st.get('duration') or '').strip()
-        # تحويل الأرقام الهندية إن وجدت إلى أرقام عربية قياسية
         trans = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
         clean_dur = raw_dur.translate(trans)
         nums = re.findall(r'\d+', clean_dur)
         if nums:
             val = int(nums[0])
-            # إذا قرأ المحرك حرف (د) كأنه 0 أو 5 في نهاية الرقم (مثل 150، 200، 255، 405، 100)
             if val >= 60:
-                if val >= 100:
-                    val = val // 10
-                else:
-                    val = 15
-            # تقريب لأقرب مدة بيداغوجية منطقية إذا كانت غير قياسية
+                val = val // 10 if val >= 100 else 15
             if val > 45:
                 val = 20
             if val < 3:
@@ -243,13 +241,16 @@ HTML_TEMPLATE = r"""
         .cta-btn:hover { filter: brightness(1.07); }
         .cta-btn:active { transform: scale(0.985); }
 
-        /* لوحة خطاطة A4 Paysage قياسية (صفحة واحدة ممتلئة 100% بدون أي فراغ أو انقسام) */
+        /* لوحة خطاطة A4 Paysage قياسية (صفحة واحدة متناسقة 100%) */
         .sheet-scroll-viewport {
             width: 100%;
             overflow-x: auto;
             padding-bottom: 14px;
             display: flex;
-            justify-content: center;
+            justify-content: flex-start;
+        }
+        @media (min-width: 1150px) {
+            .sheet-scroll-viewport { justify-content: center; }
         }
         .ncm-sheet {
             background: #ffffff;
@@ -302,8 +303,8 @@ HTML_TEMPLATE = r"""
             border-right: 5px solid #2563eb;
             border-radius: 9px;
             padding: 7px 14px;
-            margin-bottom: 9px;
-            font-size: 12.5px;
+            margin-bottom: 10px;
+            font-size: 13px;
             line-height: 1.5;
             flex-shrink: 0;
         }
@@ -328,24 +329,25 @@ HTML_TEMPLATE = r"""
             width: 100%;
             height: 100%;
             pointer-events: none;
-            z-index: 1;
+            z-index: 10;
+            overflow: visible;
         }
-        /* توازن ثلاثي متساوي العرض والارتفاع لمنع التمدد العمودي */
+        /* شبكة هندسية متوازنة تترك ممراً واضحاً للخطوط الرابطة */
         .ncm-grid-layout {
             position: relative;
             z-index: 2;
             width: 100%;
             height: 100%;
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr;
-            gap: 18px;
+            grid-template-columns: 1.15fr 0.86fr 1.15fr;
+            gap: 28px;
             align-items: stretch;
         }
         .ncm-col {
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            gap: 10px;
+            gap: 12px;
             height: 100%;
             min-height: 0;
         }
@@ -354,7 +356,7 @@ HTML_TEMPLATE = r"""
             flex-direction: column;
             justify-content: space-between;
             align-items: stretch;
-            gap: 8px;
+            gap: 12px;
             height: 100%;
             min-height: 0;
         }
@@ -364,72 +366,98 @@ HTML_TEMPLATE = r"""
 
         .station-box {
             background: #ffffff;
-            border: 1.5px solid #cbd5e1;
-            border-radius: 11px;
+            border: 2px solid #cbd5e1;
+            border-radius: 12px;
             overflow: hidden;
-            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+            box-shadow: 0 5px 15px rgba(15, 23, 42, 0.06);
             display: flex;
             flex-direction: column;
-            flex: 1;
+            flex: 1 1 0%;
             min-height: 0;
         }
         .station-header-bar {
             color: white;
-            padding: 6px 12px;
+            padding: 7px 13px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 8px;
             font-weight: 800;
-            font-size: var(--st-title-size, 13px);
+            font-size: var(--st-title-size, 14px);
             flex-shrink: 0;
         }
         .station-time-tag {
             background: rgba(0,0,0,0.28);
             color: #ffffff;
-            padding: 1.5px 9px;
+            padding: 2px 10px;
             border-radius: 999px;
-            font-size: 11px;
+            font-size: 11.5px;
             font-weight: 800;
             border: 1px solid rgba(255,255,255,0.45);
             white-space: nowrap;
             flex-shrink: 0;
         }
         .station-content-body {
-            padding: 8px 12px;
-            font-size: var(--st-body-size, 12px);
-            line-height: var(--st-line-height, 1.52);
+            padding: 9px 11px;
+            font-size: var(--st-body-size, 13.2px);
+            line-height: var(--st-line-height, 1.55);
             background: #ffffff;
             flex: 1;
             display: flex;
             flex-direction: column;
-            justify-content: center;
+            justify-content: space-between;
+            min-height: 0;
+        }
+        .station-bullets-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-evenly;
+            gap: 6px;
+            flex: 1;
+            height: 100%;
+        }
+        .station-bullet-item {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 6px 10px;
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            flex: 1;
+            align-content: center;
         }
 
+        /* تثبيت الدائرة المركزية في منتصف حصتها الهندسية تماماً */
         .center-hub-box {
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 2px;
-            flex-shrink: 0;
+            padding: 4px;
+            flex: 1 1 0%;
+            min-height: 0;
         }
         .center-blue-circle {
-            width: var(--hub-size, 196px);
-            height: var(--hub-size, 196px);
+            width: var(--hub-size, 204px);
+            height: var(--hub-size, 204px);
             border-radius: 50%;
             background: radial-gradient(circle at 35% 30%, #2563eb 0%, #1e3a8a 92%);
             color: white;
-            padding: 10px;
+            padding: 12px;
             text-align: center;
-            border: 4px solid #ffffff;
-            outline: 3px solid #2563eb;
-            box-shadow: 0 10px 24px rgba(37, 99, 235, 0.32);
+            border: 5px solid #ffffff;
+            outline: 3.5px solid #2563eb;
+            box-shadow: 0 12px 28px rgba(37, 99, 235, 0.32);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             position: relative;
             margin: 0 auto;
+            flex-shrink: 0;
         }
 
         [contenteditable="true"]:focus { outline: 2px dashed #f59e0b; background: rgba(245, 158, 11, 0.1); border-radius: 4px; }
@@ -492,22 +520,19 @@ HTML_TEMPLATE = r"""
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            /* ضمان طباعة الخطاطة في صفحة واحدة A4 Paysage بنسبة 100% بدون صفحة ثانية */
             body.printing-ncm, body.printing-ncm html {
-                width: 297mm !important;
-                height: 209mm !important;
-                max-height: 209mm !important;
+                width: 1122px !important;
+                height: 793px !important;
+                max-height: 793px !important;
                 overflow: hidden !important;
             }
             body.printing-ncm .sheet-scroll-viewport {
                 overflow: hidden !important;
-                display: flex !important;
-                align-items: center !important;
-                justify-content: center !important;
-                width: 297mm !important;
-                height: 209mm !important;
+                display: block !important;
+                width: 1122px !important;
+                height: 793px !important;
                 padding: 0 !important;
-                margin: 0 !important;
+                margin: 0 auto !important;
                 page-break-after: avoid !important;
                 page-break-inside: avoid !important;
             }
@@ -515,13 +540,13 @@ HTML_TEMPLATE = r"""
                 box-shadow: none !important;
                 border: none !important;
                 border-radius: 0 !important;
-                width: 297mm !important;
-                min-width: 297mm !important;
-                max-width: 297mm !important;
-                height: 209mm !important;
-                min-height: 209mm !important;
-                max-height: 209mm !important;
-                padding: 5mm 7mm !important;
+                width: 1122px !important;
+                min-width: 1122px !important;
+                max-width: 1122px !important;
+                height: 793px !important;
+                min-height: 793px !important;
+                max-height: 793px !important;
+                padding: 14px 18px !important;
                 margin: 0 !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
@@ -673,14 +698,14 @@ HTML_TEMPLATE = r"""
             </div>
 
             <button type="button" onclick="generateNCM()" id="ncmGenBtn" class="cta-btn w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-cyan-500 border border-cyan-300/30 font-black text-white text-sm tracking-wide flex items-center justify-center gap-2">
-                <span>إنشاء خطاطة الدرس (صفحة A4 أفقية واحدة)</span>
+                <span>توليد الخطاطة البيداغوجية</span>
                 <span class="text-base">⚡</span>
             </button>
         </div>
 
         <div id="printBar" class="hidden mb-3 flex flex-wrap items-center justify-between gap-2 glass-panel px-4 py-2.5 rounded-2xl no-print">
-            <span class="text-xs font-bold text-emerald-400">✅ الخطاطة مضبوطة في صفحة A4 Paysage واحدة (قابلة للتعديل باللمس)</span>
-            <button type="button" onclick="printDocument('landscape')" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ طباعة / حفظ PDF في صفحة واحدة</button>
+            <span class="text-xs font-bold text-emerald-400">✅ الخطاطة البيداغوجية جاهزة للتعديل المباشر والطباعة</span>
+            <button type="button" onclick="printDocument('landscape')" class="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-black text-white shadow-lg">🖨️ تصدير PDF / طباعة</button>
         </div>
 
         <div id="sheetWrapper" class="hidden sheet-scroll-viewport">
@@ -702,7 +727,7 @@ HTML_TEMPLATE = r"""
                 </div>
 
                 <div id="mindmapContainer" class="mindmap-container">
-                    <svg id="pathSvg"></svg>
+                    <svg id="pathSvg" dir="ltr"></svg>
                     <div class="ncm-grid-layout">
                         <div id="colFirst" class="ncm-col"></div>
                         <div id="colCenter" class="ncm-col-center"></div>
@@ -781,7 +806,7 @@ HTML_TEMPLATE = r"""
                 </div>
                 <div class="flex gap-2">
                     <button type="button" onclick="copyText('solverOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs font-bold text-slate-200">📋 نسخ</button>
-                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-black text-white">🖨️ طباعة / حفظ PDF</button>
+                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-black text-white">🖨️ تصدير PDF / طباعة</button>
                 </div>
             </div>
             <div id="solverOutput" class="prose-output"></div>
@@ -828,7 +853,7 @@ HTML_TEMPLATE = r"""
                 <span class="text-xs font-black text-amber-400">✅ الملخص المنظم</span>
                 <div class="flex gap-2">
                     <button type="button" onclick="copyText('summarizerOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 text-xs font-bold">📋 نسخ</button>
-                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-amber-600 text-xs font-bold text-white">🖨️ طباعة / حفظ PDF</button>
+                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-amber-600 text-xs font-bold text-white">🖨️ تصدير PDF / طباعة</button>
                 </div>
             </div>
             <div id="summarizerOutput" class="prose-output"></div>
@@ -874,7 +899,7 @@ HTML_TEMPLATE = r"""
                 <span class="text-xs font-black text-emerald-400">✅ النص المترجم</span>
                 <div class="flex gap-2">
                     <button type="button" onclick="copyText('translatorOutput')" class="px-3.5 py-1.5 rounded-xl bg-slate-800 text-xs font-bold">📋 نسخ</button>
-                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-emerald-600 text-xs font-bold text-white">🖨️ طباعة / حفظ PDF</button>
+                    <button type="button" onclick="printDocument('portrait')" class="px-4 py-1.5 rounded-xl bg-emerald-600 text-xs font-bold text-white">🖨️ تصدير PDF / طباعة</button>
                 </div>
             </div>
             <div id="translatorOutput" class="prose-output"></div>
@@ -895,30 +920,29 @@ HTML_TEMPLATE = r"""
             const sheet = document.getElementById('ncmSheet');
             if (!sheet) return;
             const cardsCount = sheet.querySelectorAll('.station-box').length;
-            let bodySize = cardsCount >= 5 ? 11.5 : 12.5;
-            let titleSize = cardsCount >= 5 ? 12.5 : 13.5;
-            let lineHeight = cardsCount >= 5 ? 1.44 : 1.55;
-            let hubSize = cardsCount >= 5 ? 164 : 196;
+            let bodySize = cardsCount >= 6 ? 12.6 : (cardsCount === 5 ? 13.4 : 14.0);
+            let titleSize = cardsCount >= 6 ? 13.2 : 14.2;
+            let lineHeight = cardsCount >= 6 ? 1.46 : 1.56;
+            let hubSize = cardsCount === 5 ? 196 : 210;
 
             sheet.style.setProperty('--st-body-size', bodySize + 'px');
             sheet.style.setProperty('--st-title-size', titleSize + 'px');
             sheet.style.setProperty('--st-line-height', lineHeight);
             sheet.style.setProperty('--hub-size', hubSize + 'px');
 
-            // تقليص تدريجي دقيق إذا كان المحتوى الداخلي أطول من ارتفاع صفحة A4 Paysage (793px)
-            for (let step = 0; step < 8; step++) {
-                const anyOverflow = Array.from(sheet.querySelectorAll('.station-box')).some(b => b.scrollHeight > b.clientHeight + 4);
+            for (let step = 0; step < 10; step++) {
+                const anyOverflow = Array.from(sheet.querySelectorAll('.station-box')).some(b => b.scrollHeight > b.clientHeight + 3);
                 if (!anyOverflow && sheet.scrollHeight <= 793) break;
-                bodySize = Math.max(9.8, bodySize - 0.4);
-                titleSize = Math.max(11.0, titleSize - 0.3);
-                lineHeight = Math.max(1.30, lineHeight - 0.04);
-                hubSize = Math.max(142, hubSize - 6);
+                bodySize = Math.max(10.5, bodySize - 0.35);
+                titleSize = Math.max(11.5, titleSize - 0.25);
+                lineHeight = Math.max(1.32, lineHeight - 0.03);
+                hubSize = Math.max(168, hubSize - 4);
                 sheet.style.setProperty('--st-body-size', bodySize + 'px');
                 sheet.style.setProperty('--st-title-size', titleSize + 'px');
                 sheet.style.setProperty('--st-line-height', lineHeight);
                 sheet.style.setProperty('--hub-size', hubSize + 'px');
             }
-            drawConnectors();
+            requestAnimationFrame(drawConnectors);
         }
 
         function printDocument(orientation) {
@@ -932,9 +956,13 @@ HTML_TEMPLATE = r"""
                 styleEl.innerHTML = '@page { size: A4 portrait; margin: 10mm; }';
             }
             setTimeout(() => {
+                drawConnectors();
                 window.print();
-                setTimeout(() => { document.body.classList.remove('printing-ncm'); }, 500);
-            }, 120);
+                setTimeout(() => {
+                    document.body.classList.remove('printing-ncm');
+                    drawConnectors();
+                }, 400);
+            }, 140);
         }
 
         function secretAdminTap() {
@@ -953,6 +981,26 @@ HTML_TEMPLATE = r"""
             if (name.length <= 32) return name;
             const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
             return name.substring(0, 22) + '...' + ext;
+        }
+
+        function autofillMetaFromFilename(filename) {
+            if (!filename) return;
+            const fn = filename.toUpperCase();
+            const lvlJoint = fn.match(/(?:N|NIVEAU|AEP)[_-]?(\d\s*[\&\+\-]\s*\d)/);
+            const lvlSingle = fn.match(/(?:N|NIVEAU|AEP)[_-]?(\d)/) || fn.match(/(\d)AEP/);
+            const per = fn.match(/P(\d)/);
+            const uni = fn.match(/U(\d)/);
+            const sem = fn.match(/SEM[_-]?(\d+)/) || fn.match(/W(\d+)/);
+            const sea = fn.match(/_S(\d+)/) || fn.match(/SEANCE[_-]?(\d+)/);
+            if (lvlJoint && !document.getElementById('metaLevel').value) {
+                document.getElementById('metaLevel').value = lvlJoint[1].replace(/[\&\-\s]+/g, '+');
+            } else if (lvlSingle && !document.getElementById('metaLevel').value) {
+                document.getElementById('metaLevel').value = lvlSingle[1];
+            }
+            if (per && !document.getElementById('metaPeriode').value) document.getElementById('metaPeriode').value = per[1];
+            if (uni && !document.getElementById('metaUnite').value) document.getElementById('metaUnite').value = uni[1];
+            if (sem && !document.getElementById('metaSemaine').value) document.getElementById('metaSemaine').value = sem[1];
+            if (sea && !document.getElementById('metaSeance').value) document.getElementById('metaSeance').value = sea[1];
         }
 
         function switchSection(secId) {
@@ -1031,6 +1079,7 @@ HTML_TEMPLATE = r"""
             const file = input.files[0];
             if (!file) return;
             ncmUploadedFilename = file.name;
+            autofillMetaFromFilename(file.name);
             document.getElementById('ncmFileName').innerText = "✅ " + formatShortName(file.name);
             document.getElementById('ncmClearBtn').classList.remove('hidden');
             if (file.name.toLowerCase().endsWith('.pptx')) {
@@ -1098,7 +1147,7 @@ HTML_TEMPLATE = r"""
             const btn = document.getElementById('ncmGenBtn');
             const origHtml = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = '<span>⏳ جاري قراءة الدرس وضبط المحطات والمدد الزمنية...</span>';
+            btn.innerHTML = '<span>⏳ جاري قراءة الدرس وتصميم الخطاطة البيداغوجية...</span>';
             try {
                 const res = await fetch('/generate_ncm', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1123,26 +1172,27 @@ HTML_TEMPLATE = r"""
 
         const stationColors = ['#2563eb', '#dc2626', '#d97706', '#16a34a', '#7c3aed', '#0d9488'];
 
-        function createStationCard(st, idx) {
+        function createStationCard(st, idx, isFr) {
             const color = stationColors[idx % stationColors.length];
             const cleanTitle = (st.title || '').replace(/^\d+[\.\-\s]*/, '');
+            const borderSide = isFr ? `border-left: 3.5px solid ${color};` : `border-right: 3.5px solid ${color};`;
             const bulletsHtml = (st.bullets || []).map(b => `
-                <li class="mb-1 flex items-start gap-1.5">
-                    <span style="color: ${color};" class="font-black mt-0.5">▪</span>
-                    <div contenteditable="true">
+                <li class="station-bullet-item" style="${borderSide}">
+                    <span style="color: ${color};" class="font-black text-sm leading-none mt-1">●</span>
+                    <div contenteditable="true" class="flex-1">
                         ${b.label ? `<strong class="text-slate-900 font-extrabold">${b.label} : </strong>` : ''}
-                        <span class="text-slate-700 font-medium">${b.text || ''}</span>
+                        <span class="text-slate-700 font-semibold">${b.text || ''}</span>
                     </div>
                 </li>
             `).join('');
-            return `<div class="station-box" style="border-top: 4px solid ${color};"><div class="station-header-bar" style="background: ${color};"><span contenteditable="true">${idx + 1}. ${cleanTitle}</span>${st.duration ? `<span contenteditable="true" class="station-time-tag">⏱ ${st.duration}</span>` : ''}</div><div class="station-content-body"><ul class="list-none p-0 m-0">${bulletsHtml}</ul></div></div>`;
+            return `<div class="station-box" data-st-idx="${idx}" style="border-top: 4px solid ${color};"><div class="station-header-bar" style="background: ${color};"><span contenteditable="true">${idx + 1}. ${cleanTitle}</span>${st.duration ? `<span contenteditable="true" class="station-time-tag">⏱ ${st.duration}</span>` : ''}</div><div class="station-content-body"><ul class="station-bullets-list">${bulletsHtml}</ul></div></div>`;
         }
 
         function createCenterHub(d, isFr, ncmNum) {
             const tag1 = isFr ? "Enseignement Explicite" : "التعليم الصريح";
             const tag2 = isFr ? "École Pionnière" : "المدرسة الرائدة";
             const seanceBadge = d.seance_ncm_badge || (isFr ? `Séance (Fiche ${d.ncm_number || ncmNum})` : `خطاطة رقم (${d.ncm_number || ncmNum})`);
-            return `<div class="center-hub-box"><div id="centralHub" class="center-blue-circle"><div class="text-[10.5px] font-extrabold text-amber-300 tracking-wide mb-0.5">${tag1}</div><div class="text-[10.5px] font-bold text-white mb-1 opacity-95">${tag2}</div><div contenteditable="true" class="text-xs md:text-sm font-black text-white bg-white/20 py-0.5 px-3 rounded-full mb-1 border border-white/30 shadow-inner leading-snug">${d.subject_level || ''}</div><div contenteditable="true" class="text-[10.5px] font-bold text-slate-100 mb-1 leading-tight">${d.unit_week || ''}</div><div contenteditable="true" class="text-[11px] font-black text-amber-300 bg-amber-500/25 border border-amber-300/40 px-2.5 py-0.5 rounded-full mb-0.5">${seanceBadge}</div>${d.livret_pages ? `<div contenteditable="true" class="text-[10px] font-semibold text-cyan-200 bg-black/30 py-0.5 px-2.5 rounded-full">${d.livret_pages}</div>` : ''}</div></div>`;
+            return `<div class="center-hub-box"><div id="centralHub" class="center-blue-circle"><div class="text-[11px] font-extrabold text-amber-300 tracking-wide mb-0.5">${tag1}</div><div class="text-[11px] font-bold text-white mb-1 opacity-95">${tag2}</div><div contenteditable="true" class="text-xs md:text-sm font-black text-white bg-white/20 py-0.5 px-3 rounded-full mb-1 border border-white/30 shadow-inner leading-snug">${d.subject_level || ''}</div><div contenteditable="true" class="text-[11px] font-bold text-slate-100 mb-1 leading-tight">${d.unit_week || ''}</div><div contenteditable="true" class="text-[11.5px] font-black text-amber-300 bg-amber-500/25 border border-amber-300/40 px-2.5 py-0.5 rounded-full mb-0.5">${seanceBadge}</div>${d.livret_pages ? `<div contenteditable="true" class="text-[10.5px] font-semibold text-cyan-200 bg-black/30 py-0.5 px-2.5 rounded-full">${d.livret_pages}</div>` : ''}</div></div>`;
         }
 
         function drawConnectors() {
@@ -1154,31 +1204,88 @@ HTML_TEMPLATE = r"""
             if (cRect.width === 0) return;
             svg.setAttribute('viewBox', `0 0 ${cRect.width} ${cRect.height}`);
             svg.innerHTML = '';
+
             const hubRect = hub.getBoundingClientRect();
             const hx = hubRect.left - cRect.left + hubRect.width / 2;
             const hy = hubRect.top - cRect.top + hubRect.height / 2;
             const radius = hubRect.width / 2;
 
             container.querySelectorAll('.station-box').forEach((card, i) => {
-                const color = stationColors[i % stationColors.length];
+                const idx = parseInt(card.getAttribute('data-st-idx') || i, 10);
+                const color = stationColors[idx % stationColors.length];
                 const cardRect = card.getBoundingClientRect();
                 const cx = cardRect.left - cRect.left + cardRect.width / 2;
                 const cy = cardRect.top - cRect.top + cardRect.height / 2;
-                let targetX = cx < hx - 80 ? cardRect.right - cRect.left : (cx > hx + 80 ? cardRect.left - cRect.left : cx);
-                let targetY = cx < hx - 80 || cx > hx + 80 ? cy : (cy < hy ? cardRect.bottom - cRect.top : cardRect.top - cRect.top);
-                const angle = Math.atan2(targetY - hy, targetX - hx);
-                const startX = hx + Math.cos(angle) * (radius + 2);
-                const startY = hy + Math.sin(angle) * (radius + 2);
-                const midX = (startX + targetX) / 2;
-                const dPath = Math.abs(cx - hx) > 80 ? `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${targetY}, ${targetX} ${targetY}` : `M ${startX} ${startY} L ${targetX} ${targetY}`;
+
+                let startX, startY, targetX, targetY, dPath;
+                const isLeftCol = cx < hx - 70;
+                const isRightCol = cx > hx + 70;
+
+                if (!isLeftCol && !isRightCol) {
+                    // محطة عمودية مباشرة تحت أو فوق الدائرة المركزية
+                    targetX = cx;
+                    if (cy > hy) {
+                        startX = hx;
+                        startY = hy + radius + 3;
+                        targetY = cardRect.top - cRect.top - 2;
+                    } else {
+                        startX = hx;
+                        startY = hy - radius - 3;
+                        targetY = cardRect.bottom - cRect.top + 2;
+                    }
+                    dPath = `M ${startX} ${startY} L ${targetX} ${targetY}`;
+                } else {
+                    // محطات العمود الأيمن أو الأيسر: مسار هندسي نظيف عبر الممر الفاصل
+                    targetX = isLeftCol ? (cardRect.right - cRect.left + 2) : (cardRect.left - cRect.left - 2);
+                    // نقطة الاتصال على البطاقة تكون أقرب لمركز الدائرة لتجنب التقاطع الطويل
+                    const clampedY = Math.max(cardRect.top - cRect.top + 32, Math.min(cardRect.bottom - cRect.top - 32, cy));
+                    targetY = clampedY;
+
+                    const dy = targetY - hy;
+                    const maxAngle = Math.PI / 3.2; // زاوية خروج متناسقة من الدائرة
+                    const ratioY = Math.max(-1, Math.min(1, dy / 220));
+                    const angleOffset = ratioY * maxAngle;
+
+                    if (isRightCol) {
+                        startX = hx + Math.cos(angleOffset) * (radius + 3);
+                        startY = hy + Math.sin(angleOffset) * (radius + 3);
+                    } else {
+                        startX = hx - Math.cos(angleOffset) * (radius + 3);
+                        startY = hy + Math.sin(angleOffset) * (radius + 3);
+                    }
+
+                    const corridorX = (startX + targetX) / 2;
+                    dPath = `M ${startX} ${startY} C ${corridorX} ${startY}, ${corridorX} ${targetY}, ${targetX} ${targetY}`;
+                }
 
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                path.setAttribute('d', dPath); path.setAttribute('stroke', color); path.setAttribute('stroke-width', '2.5'); path.setAttribute('stroke-dasharray', '5,4'); path.setAttribute('fill', 'none');
+                path.setAttribute('d', dPath);
+                path.setAttribute('stroke', color);
+                path.setAttribute('stroke-width', '2.8');
+                path.setAttribute('stroke-dasharray', '6,4');
+                path.setAttribute('stroke-linecap', 'round');
+                path.setAttribute('fill', 'none');
                 svg.appendChild(path);
 
-                const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                dot.setAttribute('cx', targetX); dot.setAttribute('cy', targetY); dot.setAttribute('r', '4'); dot.setAttribute('fill', color);
-                svg.appendChild(dot);
+                // نقطة ارتكاز عند الدائرة
+                const startDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                startDot.setAttribute('cx', startX);
+                startDot.setAttribute('cy', startY);
+                startDot.setAttribute('r', '4');
+                startDot.setAttribute('fill', '#ffffff');
+                startDot.setAttribute('stroke', color);
+                startDot.setAttribute('stroke-width', '2.5');
+                svg.appendChild(startDot);
+
+                // نقطة ارتكاز عند المربع
+                const endDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                endDot.setAttribute('cx', targetX);
+                endDot.setAttribute('cy', targetY);
+                endDot.setAttribute('r', '5');
+                endDot.setAttribute('fill', color);
+                endDot.setAttribute('stroke', '#ffffff');
+                endDot.setAttribute('stroke-width', '1.8');
+                svg.appendChild(endDot);
             });
         }
 
@@ -1204,27 +1311,29 @@ HTML_TEMPLATE = r"""
 
             if (stations.length === 2) {
                 colCenter.classList.add('only-hub');
-                colFirst.innerHTML = createStationCard(stations[0], 0);
+                colFirst.innerHTML = createStationCard(stations[0], 0, isFr);
                 colCenter.innerHTML = hubHtml;
-                colLast.innerHTML = createStationCard(stations[1], 1);
+                colLast.innerHTML = createStationCard(stations[1], 1, isFr);
             } else if (stations.length === 3) {
                 colCenter.classList.add('only-hub');
-                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
+                colFirst.innerHTML = createStationCard(stations[0], 0, isFr) + createStationCard(stations[1], 1, isFr);
                 colCenter.innerHTML = hubHtml;
-                colLast.innerHTML = createStationCard(stations[2], 2);
+                colLast.innerHTML = createStationCard(stations[2], 2, isFr);
             } else if (stations.length === 4) {
                 colCenter.classList.add('only-hub');
-                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
+                colFirst.innerHTML = createStationCard(stations[0], 0, isFr) + createStationCard(stations[1], 1, isFr);
                 colCenter.innerHTML = hubHtml;
-                colLast.innerHTML = createStationCard(stations[2], 2) + createStationCard(stations[3], 3);
+                colLast.innerHTML = createStationCard(stations[2], 2, isFr) + createStationCard(stations[3], 3, isFr);
             } else if (stations.length === 5) {
-                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
-                colCenter.innerHTML = hubHtml + createStationCard(stations[2], 2);
-                colLast.innerHTML = createStationCard(stations[3], 3) + createStationCard(stations[4], 4);
+                colFirst.innerHTML = createStationCard(stations[0], 0, isFr) + createStationCard(stations[1], 1, isFr);
+                colCenter.innerHTML = hubHtml + createStationCard(stations[2], 2, isFr);
+                colLast.innerHTML = createStationCard(stations[3], 3, isFr) + createStationCard(stations[4], 4, isFr);
             } else if (stations.length >= 6) {
-                colFirst.innerHTML = createStationCard(stations[0], 0) + createStationCard(stations[1], 1);
-                colCenter.innerHTML = createStationCard(stations[2], 2) + hubHtml + createStationCard(stations[3], 3);
-                colLast.innerHTML = createStationCard(stations[4], 4) + createStationCard(stations[5], 5);
+                // في 6 محطات: 3 يميناً و3 يساراً والدائرة حرة في المنتصف لضمان عدم تداخل أي خط
+                colCenter.classList.add('only-hub');
+                colFirst.innerHTML = createStationCard(stations[0], 0, isFr) + createStationCard(stations[1], 1, isFr) + createStationCard(stations[2], 2, isFr);
+                colCenter.innerHTML = hubHtml;
+                colLast.innerHTML = createStationCard(stations[3], 3, isFr) + createStationCard(stations[4], 4, isFr) + createStationCard(stations[5], 5, isFr);
             }
 
             document.getElementById('printBar').classList.remove('hidden');
@@ -1335,8 +1444,8 @@ Analyse minutieusement le contenu du cours ci-joint et conçois une fiche métho
    - objectives : Les objectifs d'apprentissage exacts formulés de manière concise.
 3. STATIONS, CONTENU PÉDAGOGIQUE RICHE ET DURÉES RÉELLES :
    - {station_rule}
-   - RÈGLE STRICTE SUR LES DURÉES : La durée de chaque station DOIT être un nombre réaliste compris entre **5 min et 30 min** (ex: "5 min", "10 min", "15 min", "20 min"). N'écris JAMAIS des nombres aberrants comme 100 min ou 150 min !
-   - CONTENU DE CHAQUE STATION : Rédige exactement **3 à 4 puces pédagogiques denses et précises** ("label" : "text", 12 à 20 mots par puce) contenant les sous-étapes exactes, les exemples concrets du support (mots, phrases, calculs, pages du livret), le rôle de l'enseignant (modelage, questionnement, vérification) et la tâche des élèves (ardoises, livret, travail en binôme).
+   - RÈGLE STRICTE SUR LES DURÉES : La durée de chaque station DOIT être un nombre réaliste compris entre **5 min et 40 min** (ex: "5 min", "10 min", "15 min", "20 min"). N'écris JAMAIS des nombres aberrants comme 100 min ou 150 min !
+   - CONTENU DE CHAQUE STATION : Rédige exactement **3 puces pédagogiques riches, équilibrées et précises** ("label" : "text", 14 à 22 mots par puce) contenant les sous-étapes exactes, les exemples concrets du support (mots, phrases, calculs, pages du livret), le rôle de l'enseignant et la tâche des élèves.
 Retourne UNIQUEMENT un objet JSON valide :
 {{"lang":"fr","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (Fiche {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
     else:
@@ -1346,16 +1455,16 @@ Retourne UNIQUEMENT un objet JSON valide :
             "استخرج بدقة جميع المحطات والمراحل الفعلية الواردة في ملف الدرس (بين 4 إلى 6 محطات حسب بنية الحصة في المدرسة الرائدة)."
         )
         system_prompt = f"""أنت مفتش وخبير بيداغوجي في برنامج التعليم الصريح بالمدرسة الرائدة بالمغرب.
-حلّل محتوى الدرس المرفق بدقة متناهية وصمّم خطاطة بيداغوجية احترافية مصممة لتتسع في **صفحة A4 أفقية واحدة** دون أي إخلال بالمضمون:
+حلّل محتوى الدرس المرفق بدقة متناهية وصمّم خطاطة بيداغوجية احترافية مصممة لتتسع في **صفحة A4 أفقية واحدة** بتناسق بصري كامل:
 1. قاعدة اللغة: رد باللغة العربية الفصحى 100% ("lang": "ar").
 2. استخراج بيانات الترويسة الدقيقة من الملف (المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
    - header_title: "[المادة والمكون] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
    - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس] (الكراسة: ص. [رقم الصفحة الدقيق])"
    - objectives: أهداف التعلم الدقيقة للحصة مصاغة بتركيز ووضوح.
-3. المحطات، المضمون البيداغوجي الدقيق، والمدد الزمنية المضبوطة:
+3. المحطات، المضمون البيداغوجي المتناسق، والمدد الزمنية المضبوطة:
    - {station_rule}
-   - قاعدة صارمة للمدد الزمنية: انتبه من تشوه الحروف في الشرائح حيث قد تظهر «15 د» على شكل «150» أو «25 د» على شكل «255»! يجب أن تكون مدة كل محطة رقماً واقعياً مضبوطاً بين **5 دقائق و 30 دقيقة فقط** (مثال: "5 د"، "10 د"، "15 د"، "20 د"، "25 د") بحيث يتناسب مجموعها مع الزمن الفعلي للحصة. يُمنع منعاً باتاً كتابة أرقام مثل 100 د أو 150 د!
-   - المضمون البيداغوجي لكل محطة: اكتب داخل كل محطة **3 إلى 4 نقاط بيداغوجية مركزة وغنية** ("label": "text"، بحدود 12 إلى 20 كلمة للنقطة الواحدة) تشمل: الخطوات الفرعية الدقيقة للمحطة (أو تفصيل المستويين الأول والثاني في الأقسام المشتركة)، الأمثلة والكلمات أو الجمل الحقيقية الواردة في الشرائح، أرقام صفحات الكراسة، ومهام الأستاذ والمتعلمين (على الألواح، العمل الثنائي، الكراسة، التحقق من الفهم).
+   - قاعدة صارمة للمدد الزمنية: استخرج المدة الدقيقة لكل محطة كما وردت في شريحة تنظيم الحصة (مثلاً: أنشطة اعتيادية 10 د، معجم 20 د، استماع وتحدث 20 د، قراءة 40 د، خط ونقل 15 د، اختتام 5 د). انتبه من التصاق حرف «د» بالرقم، وتأكد أن كل مدة بين **5 د و 45 د فقط**.
+   - المضمون البيداغوجي لكل محطة: اكتب داخل كل محطة **3 فقرات بيداغوجية متوازنة الطول وغنية بالمضمون** ("label": "text"، بحدود 15 إلى 24 كلمة للفقرة الواحدة) حتى تملأ المربع بتناسق تام، مع ذكر: الخطوات الفرعية الدقيقة (أو تفصيل مهام المستوى 1 والمستوى 2 في الأقسام المشتركة)، الكلمات البصرية والمفردات والحروف والأمثلة الفعلية المذكورة في الشرائح، وأرقام صفحات الكراسة.
 أرجع JSON صالحاً فقط:
 {{"lang":"ar","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
 
