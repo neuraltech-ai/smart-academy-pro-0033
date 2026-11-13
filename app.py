@@ -261,9 +261,9 @@ HTML_TEMPLATE = r"""
             width: 1122px;
             min-width: 1122px;
             max-width: 1122px;
-            height: 793px;
-            min-height: 793px;
-            max-height: 793px;
+            height: 685px;
+            min-height: 685px;
+            max-height: 685px;
             margin: 0 auto;
             position: relative;
             border: 1px solid #cbd5e1;
@@ -398,7 +398,7 @@ HTML_TEMPLATE = r"""
             flex-shrink: 0;
         }
         .station-content-body {
-            padding: 9px 11px;
+            padding: 7px 10px;
             font-size: var(--st-body-size, 13.2px);
             line-height: var(--st-line-height, 1.55);
             background: #ffffff;
@@ -423,7 +423,7 @@ HTML_TEMPLATE = r"""
             background: #f8fafc;
             border: 1px solid #e2e8f0;
             border-radius: 8px;
-            padding: 6px 10px;
+            padding: 4.5px 9px;
             display: flex;
             align-items: flex-start;
             gap: 6px;
@@ -507,6 +507,8 @@ HTML_TEMPLATE = r"""
             html, body {
                 background: #ffffff !important;
                 color: #000000 !important;
+                min-height: 0 !important;
+                height: auto !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 -webkit-print-color-adjust: exact !important;
@@ -521,9 +523,19 @@ HTML_TEMPLATE = r"""
                 padding: 0 !important;
             }
             html:has(body.printing-ncm), body.printing-ncm {
-                width: 100% !important;
-                height: 755px !important;
-                max-height: 755px !important;
+                width: 1122px !important;
+                min-height: 0 !important;
+                height: 685px !important;
+                max-height: 685px !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                overflow: hidden !important;
+            }
+            body.printing-ncm #sec-ncm {
+                width: 1122px !important;
+                max-width: 1122px !important;
+                height: 685px !important;
+                max-height: 685px !important;
                 margin: 0 !important;
                 padding: 0 !important;
                 overflow: hidden !important;
@@ -531,27 +543,26 @@ HTML_TEMPLATE = r"""
             body.printing-ncm .sheet-scroll-viewport {
                 overflow: hidden !important;
                 display: block !important;
-                width: 1100px !important;
-                height: 755px !important;
-                max-height: 755px !important;
+                width: 1122px !important;
+                height: 685px !important;
+                max-height: 685px !important;
                 padding: 0 !important;
-                margin: 0 auto !important;
+                margin: 0 !important;
                 page-break-after: avoid !important;
                 page-break-inside: avoid !important;
-                break-after: avoid !important;
             }
             body.printing-ncm .ncm-sheet {
                 box-shadow: none !important;
                 border: none !important;
                 border-radius: 0 !important;
-                width: 1100px !important;
-                min-width: 1100px !important;
-                max-width: 1100px !important;
-                height: 755px !important;
-                min-height: 755px !important;
-                max-height: 755px !important;
+                width: 1122px !important;
+                min-width: 1122px !important;
+                max-width: 1122px !important;
+                height: 685px !important;
+                min-height: 685px !important;
+                max-height: 685px !important;
                 padding: 10px 14px !important;
-                margin: 0 auto !important;
+                margin: 0 !important;
                 page-break-after: avoid !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
@@ -937,7 +948,7 @@ HTML_TEMPLATE = r"""
 
             for (let step = 0; step < 10; step++) {
                 const anyOverflow = Array.from(sheet.querySelectorAll('.station-box')).some(b => b.scrollHeight > b.clientHeight + 3);
-                if (!anyOverflow && sheet.scrollHeight <= 793) break;
+                if (!anyOverflow && sheet.scrollHeight <= 685) break;
                 bodySize = Math.max(10.5, bodySize - 0.35);
                 titleSize = Math.max(11.5, titleSize - 0.25);
                 lineHeight = Math.max(1.32, lineHeight - 0.03);
@@ -954,7 +965,7 @@ HTML_TEMPLATE = r"""
             const styleEl = document.getElementById('dynamicPageStyle');
             if (orientation === 'landscape') {
                 document.body.classList.add('printing-ncm');
-                styleEl.innerHTML = '@page { size: A4 landscape; margin: 3mm; }';
+                styleEl.innerHTML = '@page { size: 297mm 210mm; margin: 0mm; }';
                 fitNcmToSinglePage();
             } else {
                 document.body.classList.remove('printing-ncm');
