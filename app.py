@@ -126,6 +126,11 @@ def parse_filename_metadata(filename):
 
 def sanitize_ncm_data(res_json):
     is_fr = (res_json.get('lang') or '').lower() == 'fr'
+    if 'header_title' in res_json and res_json['header_title']:
+        # حذف أي مكونات فرعية بين قوسين مثل (Oral, Lecture, Écriture) من الترويسة
+        res_json['header_title'] = re.sub(r'\s*\([^)]*\)', '', res_json['header_title']).strip()
+    if is_fr and 'seance_ncm_badge' in res_json and res_json['seance_ncm_badge']:
+        res_json['seance_ncm_badge'] = re.sub(r'Fiche(\s*N°)?', 'NCM', res_json['seance_ncm_badge'], flags=re.IGNORECASE)
     unit = "min" if is_fr else "د"
     stations = res_json.get('stations') or []
     for st in stations:
@@ -346,17 +351,17 @@ HTML_TEMPLATE = r"""
         .ncm-col {
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
-            gap: 12px;
+            justify-content: center;
+            gap: 14px;
             height: 100%;
             min-height: 0;
         }
         .ncm-col-center {
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
+            justify-content: center;
             align-items: stretch;
-            gap: 12px;
+            gap: 14px;
             height: 100%;
             min-height: 0;
         }
@@ -372,41 +377,38 @@ HTML_TEMPLATE = r"""
             box-shadow: 0 5px 15px rgba(15, 23, 42, 0.06);
             display: flex;
             flex-direction: column;
-            flex: 1 1 0%;
-            min-height: 0;
+            flex: 0 0 auto;
+            height: auto;
         }
         .station-header-bar {
             color: white;
-            padding: 7px 13px;
+            padding: 6px 12px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             gap: 8px;
             font-weight: 800;
-            font-size: var(--st-title-size, 14px);
+            font-size: var(--st-title-size, 13.5px);
             flex-shrink: 0;
         }
         .station-time-tag {
             background: rgba(0,0,0,0.28);
             color: #ffffff;
-            padding: 2px 10px;
+            padding: 1.5px 9px;
             border-radius: 999px;
-            font-size: 11.5px;
+            font-size: 11px;
             font-weight: 800;
             border: 1px solid rgba(255,255,255,0.45);
             white-space: nowrap;
             flex-shrink: 0;
         }
         .station-content-body {
-            padding: 7px 10px;
-            font-size: var(--st-body-size, 13.2px);
-            line-height: var(--st-line-height, 1.55);
+            padding: 8px 10px;
+            font-size: var(--st-body-size, 12.8px);
+            line-height: var(--st-line-height, 1.5);
             background: #ffffff;
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            min-height: 0;
+            flex: 0 0 auto;
+            height: auto;
         }
         .station-bullets-list {
             list-style: none;
@@ -414,31 +416,29 @@ HTML_TEMPLATE = r"""
             margin: 0;
             display: flex;
             flex-direction: column;
-            justify-content: space-evenly;
+            justify-content: flex-start;
             gap: 6px;
-            flex: 1;
-            height: 100%;
+            height: auto;
         }
         .station-bullet-item {
             background: #f8fafc;
             border: 1px solid #e2e8f0;
             border-radius: 8px;
-            padding: 4.5px 9px;
+            padding: 5px 9px;
             display: flex;
             align-items: flex-start;
             gap: 6px;
-            flex: 1;
-            align-content: center;
+            flex: 0 0 auto;
+            height: auto;
         }
 
-        /* تثبيت الدائرة المركزية في منتصف حصتها الهندسية تماماً */
         .center-hub-box {
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 4px;
-            flex: 1 1 0%;
-            min-height: 0;
+            flex: 0 0 auto;
+            height: auto;
         }
         .center-blue-circle {
             width: var(--hub-size, 204px);
@@ -934,25 +934,28 @@ HTML_TEMPLATE = r"""
 
         function fitNcmToSinglePage() {
             const sheet = document.getElementById('ncmSheet');
-            if (!sheet) return;
+            const container = document.getElementById('mindmapContainer');
+            if (!sheet || !container) return;
             const cardsCount = sheet.querySelectorAll('.station-box').length;
-            let bodySize = cardsCount >= 6 ? 12.6 : (cardsCount === 5 ? 13.4 : 14.0);
-            let titleSize = cardsCount >= 6 ? 13.2 : 14.2;
-            let lineHeight = cardsCount >= 6 ? 1.46 : 1.56;
-            let hubSize = cardsCount === 5 ? 196 : 210;
+            let bodySize = cardsCount >= 6 ? 11.8 : (cardsCount === 5 ? 12.5 : 13.2);
+            let titleSize = cardsCount >= 6 ? 12.6 : 13.5;
+            let lineHeight = cardsCount >= 6 ? 1.42 : 1.50;
+            let hubSize = cardsCount >= 5 ? 184 : 200;
 
             sheet.style.setProperty('--st-body-size', bodySize + 'px');
             sheet.style.setProperty('--st-title-size', titleSize + 'px');
             sheet.style.setProperty('--st-line-height', lineHeight);
             sheet.style.setProperty('--hub-size', hubSize + 'px');
 
-            for (let step = 0; step < 10; step++) {
-                const anyOverflow = Array.from(sheet.querySelectorAll('.station-box')).some(b => b.scrollHeight > b.clientHeight + 3);
-                if (!anyOverflow && sheet.scrollHeight <= 685) break;
-                bodySize = Math.max(10.5, bodySize - 0.35);
-                titleSize = Math.max(11.5, titleSize - 0.25);
-                lineHeight = Math.max(1.32, lineHeight - 0.03);
-                hubSize = Math.max(168, hubSize - 4);
+            const cols = [document.getElementById('colFirst'), document.getElementById('colCenter'), document.getElementById('colLast')];
+            for (let step = 0; step < 12; step++) {
+                const maxH = container.clientHeight || 540;
+                const colOverflow = cols.some(c => c && c.scrollHeight > maxH + 2);
+                if (!colOverflow && sheet.scrollHeight <= 685) break;
+                bodySize = Math.max(9.8, bodySize - 0.35);
+                titleSize = Math.max(11.0, titleSize - 0.25);
+                lineHeight = Math.max(1.28, lineHeight - 0.03);
+                hubSize = Math.max(156, hubSize - 5);
                 sheet.style.setProperty('--st-body-size', bodySize + 'px');
                 sheet.style.setProperty('--st-title-size', titleSize + 'px');
                 sheet.style.setProperty('--st-line-height', lineHeight);
@@ -962,6 +965,12 @@ HTML_TEMPLATE = r"""
         }
 
         function printDocument(orientation) {
+            if (ncmUploadedFilename && orientation === 'landscape') {
+                document.title = ncmUploadedFilename.replace(/\.[^/.]+$/, '');
+            } else if (orientation === 'landscape') {
+                const hdr = document.getElementById('hdrTitle')?.innerText?.trim();
+                if (hdr) document.title = hdr;
+            }
             const styleEl = document.getElementById('dynamicPageStyle');
             if (orientation === 'landscape') {
                 document.body.classList.add('printing-ncm');
@@ -1099,6 +1108,7 @@ HTML_TEMPLATE = r"""
             const file = input.files[0];
             if (!file) return;
             ncmUploadedFilename = file.name;
+            document.title = file.name.replace(/\.[^/.]+$/, '');
             autofillMetaFromFilename(file.name);
             document.getElementById('ncmFileName').innerText = "✅ " + formatShortName(file.name);
             document.getElementById('ncmClearBtn').classList.remove('hidden');
@@ -1128,12 +1138,14 @@ HTML_TEMPLATE = r"""
             document.getElementById('ncmClearBtn').classList.add('hidden');
             ['metaLevel','metaPeriode','metaUnite','metaSemaine','metaSeance','ncmNumInput'].forEach(id => document.getElementById(id).value = '');
             ncmBase64 = null; ncmMime = null; ncmUploadedFilename = '';
+            document.title = 'الأكاديمية الذكية Pro';
         }
 
         async function handleToolFile(input, toolKey) {
             const file = input.files[0];
             if (!file) return;
             document.getElementById(toolKey + 'FileName').innerText = "✅ " + formatShortName(file.name);
+            document.title = file.name.replace(/\.[^/.]+$/, '');
             document.getElementById(toolKey + 'ClearBtn').classList.remove('hidden');
             if (file.name.toLowerCase().endsWith('.pptx')) {
                 const fd = new FormData(); fd.append('file', file);
@@ -1212,7 +1224,7 @@ HTML_TEMPLATE = r"""
         function createCenterHub(d, isFr, ncmNum) {
             const tag1 = isFr ? "Enseignement Explicite" : "التعليم الصريح";
             const tag2 = isFr ? "École Pionnière" : "المدرسة الرائدة";
-            const seanceBadge = d.seance_ncm_badge || (isFr ? `Séance (Fiche ${d.ncm_number || ncmNum})` : `خطاطة رقم (${d.ncm_number || ncmNum})`);
+            const seanceBadge = d.seance_ncm_badge || (isFr ? `Séance (NCM ${d.ncm_number || ncmNum})` : `خطاطة رقم (${d.ncm_number || ncmNum})`);
             return `<div class="center-hub-box"><div id="centralHub" class="center-blue-circle" style="padding: 16px 12px; gap: 2px;"><div class="text-[10px] font-extrabold text-amber-300 leading-tight">${tag1}</div><div class="text-[10px] font-bold text-white opacity-95 leading-tight mb-0.5">${tag2}</div><div contenteditable="true" class="text-[11.5px] font-black text-white bg-white/20 py-0.5 px-2.5 rounded-full border border-white/30 shadow-inner leading-tight max-w-[92%]">${d.subject_level || ''}</div><div contenteditable="true" class="text-[10px] font-bold text-slate-100 leading-tight mt-0.5">${d.unit_week || ''}</div><div contenteditable="true" class="text-[10.5px] font-black text-amber-300 bg-amber-500/25 border border-amber-300/40 px-2.5 py-0.5 rounded-full leading-tight mt-0.5">${seanceBadge}</div>${d.livret_pages ? `<div contenteditable="true" class="text-[9.5px] font-semibold text-cyan-200 bg-black/30 py-0.5 px-2 rounded-full leading-tight mt-0.5">${d.livret_pages}</div>` : ''}</div></div>`;
         }
 
@@ -1261,7 +1273,8 @@ HTML_TEMPLATE = r"""
                     // تحديد نقطة الاتصال على حافة البطاقة والممر الفاصل بين الأعمدة
                     targetY = cy;
                     const isLowerCard = cy > hy + 45;
-                    const angle = isLowerCard ? (Math.PI / 7) : (-Math.PI / 9);
+                    const isUpperCard = cy < hy - 45;
+                    const angle = isLowerCard ? (Math.PI / 7) : (isUpperCard ? (-Math.PI / 9) : 0);
 
                     if (isRightCol) {
                         startX = hx + Math.cos(angle) * (radius + 3);
@@ -1327,7 +1340,7 @@ HTML_TEMPLATE = r"""
             sheet.setAttribute('dir', isFr ? 'ltr' : 'rtl');
             document.getElementById('hdrTitle').innerText = d.header_title || '';
             document.getElementById('hdrSub').innerText = d.lesson_subtitle || '';
-            document.getElementById('hdrBadgeLabel').innerText = isFr ? 'FICHE N°' : 'خطاطة رقم';
+            document.getElementById('hdrBadgeLabel').innerText = isFr ? 'NCM' : 'خطاطة رقم';
             document.getElementById('hdrBadgeNum').innerText = d.ncm_number || ncmNum;
             document.getElementById('objLabel').innerText = isFr ? "Objectifs d'apprentissage : " : "أهداف التعلم: ";
             document.getElementById('objText').innerText = d.objectives || '';
@@ -1471,7 +1484,7 @@ def generate_ncm():
 Analyse minutieusement le contenu du cours ci-joint et conçois une fiche méthodologique complète qui tient sur UNE SEULE page A4 paysage :
 1. RÈGLE DE LANGUE : Réponds 100% en FRANÇAIS ("lang": "fr"). Zéro mot en arabe.
 2. MÉTADONNÉES EXACTES (Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
-   - header_title : "[Matière / Composante] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
+   - header_title : "[Matière uniquement, ex: Français ou Mathématiques, SANS sous-composantes entre parenthèses] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
    - lesson_subtitle : "Enseignement explicite | [Titre exact de la leçon] (Livret : p. [numéro exact de page si mentionné])"
    - objectives : Les objectifs d'apprentissage exacts formulés de manière concise.
 3. STATIONS, CONTENU PÉDAGOGIQUE RICHE ET DURÉES RÉELLES :
@@ -1479,7 +1492,7 @@ Analyse minutieusement le contenu du cours ci-joint et conçois une fiche métho
    - RÈGLE STRICTE SUR LES DURÉES : La durée de chaque station DOIT être un nombre réaliste compris entre **5 min et 40 min** (ex: "5 min", "10 min", "15 min", "20 min"). N'écris JAMAIS des nombres aberrants comme 100 min ou 150 min !
    - CONTENU DE CHAQUE STATION : Rédige exactement **3 puces pédagogiques riches, équilibrées et précises** ("label" : "text", 14 à 22 mots par puce) contenant les sous-étapes exactes, les exemples concrets du support (mots, phrases, calculs, pages du livret), le rôle de l'enseignant et la tâche des élèves.
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit de la séance'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (Fiche {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit de la séance'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
     else:
         station_rule = (
             f"قسّم الحصة إلى ({stations}) محطات منهجية بالضبط تغطي كافة مراحل الدرس."
