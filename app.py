@@ -520,34 +520,39 @@ HTML_TEMPLATE = r"""
                 margin: 0 !important;
                 padding: 0 !important;
             }
-            body.printing-ncm, body.printing-ncm html {
-                width: 1122px !important;
-                height: 793px !important;
-                max-height: 793px !important;
+            html:has(body.printing-ncm), body.printing-ncm {
+                width: 100% !important;
+                height: 755px !important;
+                max-height: 755px !important;
+                margin: 0 !important;
+                padding: 0 !important;
                 overflow: hidden !important;
             }
             body.printing-ncm .sheet-scroll-viewport {
                 overflow: hidden !important;
                 display: block !important;
-                width: 1122px !important;
-                height: 793px !important;
+                width: 1100px !important;
+                height: 755px !important;
+                max-height: 755px !important;
                 padding: 0 !important;
                 margin: 0 auto !important;
                 page-break-after: avoid !important;
                 page-break-inside: avoid !important;
+                break-after: avoid !important;
             }
             body.printing-ncm .ncm-sheet {
                 box-shadow: none !important;
                 border: none !important;
                 border-radius: 0 !important;
-                width: 1122px !important;
-                min-width: 1122px !important;
-                max-width: 1122px !important;
-                height: 793px !important;
-                min-height: 793px !important;
-                max-height: 793px !important;
-                padding: 14px 18px !important;
-                margin: 0 !important;
+                width: 1100px !important;
+                min-width: 1100px !important;
+                max-width: 1100px !important;
+                height: 755px !important;
+                min-height: 755px !important;
+                max-height: 755px !important;
+                padding: 10px 14px !important;
+                margin: 0 auto !important;
+                page-break-after: avoid !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
             }
@@ -691,7 +696,7 @@ HTML_TEMPLATE = r"""
                         <div class="grid grid-cols-3 gap-1.5">
                             <input id="metaSemaine" type="text" placeholder="الأسبوع" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-center text-[11px] text-white">
                             <input id="metaSeance" type="text" placeholder="الحصة" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-center text-[11px] text-white">
-                            <input id="ncmNumInput" type="text" value="10" placeholder="رقم الخطاطة" class="p-1.5 rounded-lg bg-slate-800 border border-amber-500/50 text-center font-black text-[11px] text-amber-300">
+                            <input id="ncmNumInput" type="text" value="" placeholder="رقم الخطاطة" class="p-1.5 rounded-lg bg-slate-800 border border-amber-500/50 text-center font-black text-[11px] text-amber-300">
                         </div>
                     </div>
                 </div>
@@ -949,7 +954,7 @@ HTML_TEMPLATE = r"""
             const styleEl = document.getElementById('dynamicPageStyle');
             if (orientation === 'landscape') {
                 document.body.classList.add('printing-ncm');
-                styleEl.innerHTML = '@page { size: 297mm 210mm; margin: 0mm; }';
+                styleEl.innerHTML = '@page { size: A4 landscape; margin: 3mm; }';
                 fitNcmToSinglePage();
             } else {
                 document.body.classList.remove('printing-ncm');
@@ -1001,6 +1006,10 @@ HTML_TEMPLATE = r"""
             if (uni && !document.getElementById('metaUnite').value) document.getElementById('metaUnite').value = uni[1];
             if (sem && !document.getElementById('metaSemaine').value) document.getElementById('metaSemaine').value = sem[1];
             if (sea && !document.getElementById('metaSeance').value) document.getElementById('metaSeance').value = sea[1];
+            const ncmMatch = fn.match(/NCM[_-]?(\d+)/) || fn.match(/FICHE[_-]?(\d+)/);
+            if (ncmMatch && !document.getElementById('ncmNumInput').value) {
+                document.getElementById('ncmNumInput').value = ncmMatch[1];
+            }
         }
 
         function switchSection(secId) {
@@ -1106,7 +1115,8 @@ HTML_TEMPLATE = r"""
             document.getElementById('ncmFileInput').value = '';
             document.getElementById('ncmFileName').innerText = 'اختر ملف الدرس (.pptx / .pdf / صورة)';
             document.getElementById('ncmClearBtn').classList.add('hidden');
-            ncmBase64 = null; ncmMime = null;
+            ['metaLevel','metaPeriode','metaUnite','metaSemaine','metaSeance','ncmNumInput'].forEach(id => document.getElementById(id).value = '');
+            ncmBase64 = null; ncmMime = null; ncmUploadedFilename = '';
         }
 
         async function handleToolFile(input, toolKey) {
@@ -1141,7 +1151,7 @@ HTML_TEMPLATE = r"""
 
         async function generateNCM() {
             const text = document.getElementById('ncmTextInput').value.trim();
-            const ncmNum = document.getElementById('ncmNumInput').value.trim() || '10';
+            const ncmNum = document.getElementById('ncmNumInput').value.trim() || '';
             const apiKey = localStorage.getItem('gemini_api_key');
             if (!text && !ncmBase64) return alert('يرجى رفع ملف الدرس أو لصق محتواه أولاً.');
             const btn = document.getElementById('ncmGenBtn');
@@ -1420,7 +1430,7 @@ def generate_ncm():
     text = data.get('text', '')
     filename = data.get('filename', '')
     stations = int(data.get('stations', 0))
-    ncm_num = data.get('ncm_num', '10')
+    ncm_num = (data.get('ncm_num') or '').strip()
     overrides = data.get('meta_overrides') or {}
     file_b64 = data.get('file_b64')
     mime_type = data.get('mime_type')
@@ -1458,7 +1468,7 @@ Analyse minutieusement le contenu du cours ci-joint et conçois une fiche métho
    - RÈGLE STRICTE SUR LES DURÉES : La durée de chaque station DOIT être un nombre réaliste compris entre **5 min et 40 min** (ex: "5 min", "10 min", "15 min", "20 min"). N'écris JAMAIS des nombres aberrants comme 100 min ou 150 min !
    - CONTENU DE CHAQUE STATION : Rédige exactement **3 puces pédagogiques riches, équilibrées et précises** ("label" : "text", 14 à 22 mots par puce) contenant les sous-étapes exactes, les exemples concrets du support (mots, phrases, calculs, pages du livret), le rôle de l'enseignant et la tâche des élèves.
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (Fiche {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit de la séance'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (Fiche {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
     else:
         station_rule = (
             f"قسّم الحصة إلى ({stations}) محطات منهجية بالضبط تغطي كافة مراحل الدرس."
@@ -1477,7 +1487,7 @@ Retourne UNIQUEMENT un objet JSON valide :
    - قاعدة صارمة للمدد الزمنية: استخرج المدة الدقيقة لكل محطة كما وردت في شريحة تنظيم الحصة (مثلاً: أنشطة اعتيادية 10 د، معجم 20 د، استماع وتحدث 20 د، قراءة 40 د، خط ونقل 15 د، اختتام 5 د). انتبه من التصاق حرف «د» بالرقم، وتأكد أن كل مدة بين **5 د و 45 د فقط**.
    - المضمون البيداغوجي لكل محطة: اكتب داخل كل محطة **3 فقرات بيداغوجية متوازنة الطول وغنية بالمضمون** ("label": "text"، بحدود 15 إلى 24 كلمة للفقرة الواحدة) حتى تملأ المربع بتناسق تام، مع ذكر: الخطوات الفرعية الدقيقة (أو تفصيل مهام المستوى 1 والمستوى 2 في الأقسام المشتركة)، الكلمات البصرية والمفردات والحروف والأمثلة الفعلية المذكورة في الشرائح، وأرقام صفحات الكراسة.
 أرجع JSON صالحاً فقط:
-{{"lang":"ar","ncm_number":"{ncm_num}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة المستنتج من الدرس'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
 
     parts = [{"text": system_prompt + "\n\nLesson Content:\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly.")}]
     if file_b64 and mime_type:
