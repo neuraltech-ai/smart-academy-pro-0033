@@ -329,7 +329,7 @@ HTML_TEMPLATE = r"""
             width: 100%;
             height: 100%;
             pointer-events: none;
-            z-index: 10;
+            z-index: 1;
             overflow: visible;
         }
         /* شبكة هندسية متوازنة تترك ممراً واضحاً للخطوط الرابطة */
@@ -339,8 +339,8 @@ HTML_TEMPLATE = r"""
             width: 100%;
             height: 100%;
             display: grid;
-            grid-template-columns: 1.15fr 0.86fr 1.15fr;
-            gap: 28px;
+            grid-template-columns: 1.12fr 0.90fr 1.12fr;
+            gap: 32px;
             align-items: stretch;
         }
         .ncm-col {
@@ -1192,20 +1192,22 @@ HTML_TEMPLATE = r"""
             const tag1 = isFr ? "Enseignement Explicite" : "التعليم الصريح";
             const tag2 = isFr ? "École Pionnière" : "المدرسة الرائدة";
             const seanceBadge = d.seance_ncm_badge || (isFr ? `Séance (Fiche ${d.ncm_number || ncmNum})` : `خطاطة رقم (${d.ncm_number || ncmNum})`);
-            return `<div class="center-hub-box"><div id="centralHub" class="center-blue-circle"><div class="text-[11px] font-extrabold text-amber-300 tracking-wide mb-0.5">${tag1}</div><div class="text-[11px] font-bold text-white mb-1 opacity-95">${tag2}</div><div contenteditable="true" class="text-xs md:text-sm font-black text-white bg-white/20 py-0.5 px-3 rounded-full mb-1 border border-white/30 shadow-inner leading-snug">${d.subject_level || ''}</div><div contenteditable="true" class="text-[11px] font-bold text-slate-100 mb-1 leading-tight">${d.unit_week || ''}</div><div contenteditable="true" class="text-[11.5px] font-black text-amber-300 bg-amber-500/25 border border-amber-300/40 px-2.5 py-0.5 rounded-full mb-0.5">${seanceBadge}</div>${d.livret_pages ? `<div contenteditable="true" class="text-[10.5px] font-semibold text-cyan-200 bg-black/30 py-0.5 px-2.5 rounded-full">${d.livret_pages}</div>` : ''}</div></div>`;
+            return `<div class="center-hub-box"><div id="centralHub" class="center-blue-circle" style="padding: 16px 12px; gap: 2px;"><div class="text-[10px] font-extrabold text-amber-300 leading-tight">${tag1}</div><div class="text-[10px] font-bold text-white opacity-95 leading-tight mb-0.5">${tag2}</div><div contenteditable="true" class="text-[11.5px] font-black text-white bg-white/20 py-0.5 px-2.5 rounded-full border border-white/30 shadow-inner leading-tight max-w-[92%]">${d.subject_level || ''}</div><div contenteditable="true" class="text-[10px] font-bold text-slate-100 leading-tight mt-0.5">${d.unit_week || ''}</div><div contenteditable="true" class="text-[10.5px] font-black text-amber-300 bg-amber-500/25 border border-amber-300/40 px-2.5 py-0.5 rounded-full leading-tight mt-0.5">${seanceBadge}</div>${d.livret_pages ? `<div contenteditable="true" class="text-[9.5px] font-semibold text-cyan-200 bg-black/30 py-0.5 px-2 rounded-full leading-tight mt-0.5">${d.livret_pages}</div>` : ''}</div></div>`;
         }
 
         function drawConnectors() {
             const container = document.getElementById('mindmapContainer');
             const svg = document.getElementById('pathSvg');
             const hub = document.getElementById('centralHub');
-            if (!container || !svg || !hub) return;
+            const colCenter = document.getElementById('colCenter');
+            if (!container || !svg || !hub || !colCenter) return;
             const cRect = container.getBoundingClientRect();
             if (cRect.width === 0) return;
             svg.setAttribute('viewBox', `0 0 ${cRect.width} ${cRect.height}`);
             svg.innerHTML = '';
 
             const hubRect = hub.getBoundingClientRect();
+            const centerColRect = colCenter.getBoundingClientRect();
             const hx = hubRect.left - cRect.left + hubRect.width / 2;
             const hy = hubRect.top - cRect.top + hubRect.height / 2;
             const radius = hubRect.width / 2;
@@ -1222,69 +1224,78 @@ HTML_TEMPLATE = r"""
                 const isRightCol = cx > hx + 70;
 
                 if (!isLeftCol && !isRightCol) {
-                    // محطة عمودية مباشرة تحت أو فوق الدائرة المركزية
+                    // محطة العمود الأوسط (أسفل أو أعلى الدائرة مباشرة)
                     targetX = cx;
                     if (cy > hy) {
                         startX = hx;
                         startY = hy + radius + 3;
-                        targetY = cardRect.top - cRect.top - 2;
+                        targetY = cardRect.top - cRect.top - 3;
                     } else {
                         startX = hx;
                         startY = hy - radius - 3;
-                        targetY = cardRect.bottom - cRect.top + 2;
+                        targetY = cardRect.bottom - cRect.top + 3;
                     }
                     dPath = `M ${startX} ${startY} L ${targetX} ${targetY}`;
                 } else {
-                    // محطات العمود الأيمن أو الأيسر: مسار هندسي نظيف عبر الممر الفاصل
-                    targetX = isLeftCol ? (cardRect.right - cRect.left + 2) : (cardRect.left - cRect.left - 2);
-                    // نقطة الاتصال على البطاقة تكون أقرب لمركز الدائرة لتجنب التقاطع الطويل
-                    const clampedY = Math.max(cardRect.top - cRect.top + 32, Math.min(cardRect.bottom - cRect.top - 32, cy));
-                    targetY = clampedY;
-
-                    const dy = targetY - hy;
-                    const maxAngle = Math.PI / 3.2; // زاوية خروج متناسقة من الدائرة
-                    const ratioY = Math.max(-1, Math.min(1, dy / 220));
-                    const angleOffset = ratioY * maxAngle;
+                    // تحديد نقطة الاتصال على حافة البطاقة والممر الفاصل بين الأعمدة
+                    targetY = cy;
+                    const isLowerCard = cy > hy + 45;
+                    const angle = isLowerCard ? (Math.PI / 7) : (-Math.PI / 9);
 
                     if (isRightCol) {
-                        startX = hx + Math.cos(angleOffset) * (radius + 3);
-                        startY = hy + Math.sin(angleOffset) * (radius + 3);
+                        startX = hx + Math.cos(angle) * (radius + 3);
+                        startY = hy + Math.sin(angle) * (radius + 3);
+                        targetX = cardRect.left - cRect.left - 3;
+                        const gapLeft = centerColRect.right - cRect.left;
+                        const corridorX = isLowerCard ? (gapLeft + (targetX - gapLeft) * 0.42) : (gapLeft + (targetX - gapLeft) * 0.68);
+                        const r = 12;
+                        if (Math.abs(targetY - startY) < 28) {
+                            dPath = `M ${startX} ${startY} C ${corridorX} ${startY}, ${corridorX} ${targetY}, ${targetX} ${targetY}`;
+                        } else {
+                            const dirY = targetY > startY ? 1 : -1;
+                            dPath = `M ${startX} ${startY} L ${corridorX - r} ${startY} Q ${corridorX} ${startY} ${corridorX} ${startY + dirY * r} L ${corridorX} ${targetY - dirY * r} Q ${corridorX} ${targetY} ${corridorX + r} ${targetY} L ${targetX} ${targetY}`;
+                        }
                     } else {
-                        startX = hx - Math.cos(angleOffset) * (radius + 3);
-                        startY = hy + Math.sin(angleOffset) * (radius + 3);
+                        startX = hx - Math.cos(angle) * (radius + 3);
+                        startY = hy + Math.sin(angle) * (radius + 3);
+                        targetX = cardRect.right - cRect.left + 3;
+                        const gapRight = centerColRect.left - cRect.left;
+                        const corridorX = isLowerCard ? (gapRight - (gapRight - targetX) * 0.42) : (gapRight - (gapRight - targetX) * 0.68);
+                        const r = 12;
+                        if (Math.abs(targetY - startY) < 28) {
+                            dPath = `M ${startX} ${startY} C ${corridorX} ${startY}, ${corridorX} ${targetY}, ${targetX} ${targetY}`;
+                        } else {
+                            const dirY = targetY > startY ? 1 : -1;
+                            dPath = `M ${startX} ${startY} L ${corridorX + r} ${startY} Q ${corridorX} ${startY} ${corridorX} ${startY + dirY * r} L ${corridorX} ${targetY - dirY * r} Q ${corridorX} ${targetY} ${corridorX - r} ${targetY} L ${targetX} ${targetY}`;
+                        }
                     }
-
-                    const corridorX = (startX + targetX) / 2;
-                    dPath = `M ${startX} ${startY} C ${corridorX} ${startY}, ${corridorX} ${targetY}, ${targetX} ${targetY}`;
                 }
 
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
                 path.setAttribute('d', dPath);
                 path.setAttribute('stroke', color);
-                path.setAttribute('stroke-width', '2.8');
+                path.setAttribute('stroke-width', '2.6');
                 path.setAttribute('stroke-dasharray', '6,4');
                 path.setAttribute('stroke-linecap', 'round');
                 path.setAttribute('fill', 'none');
                 svg.appendChild(path);
 
-                // نقطة ارتكاز عند الدائرة
                 const startDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 startDot.setAttribute('cx', startX);
                 startDot.setAttribute('cy', startY);
-                startDot.setAttribute('r', '4');
+                startDot.setAttribute('r', '3.8');
                 startDot.setAttribute('fill', '#ffffff');
                 startDot.setAttribute('stroke', color);
-                startDot.setAttribute('stroke-width', '2.5');
+                startDot.setAttribute('stroke-width', '2.4');
                 svg.appendChild(startDot);
 
-                // نقطة ارتكاز عند المربع
                 const endDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 endDot.setAttribute('cx', targetX);
                 endDot.setAttribute('cy', targetY);
-                endDot.setAttribute('r', '5');
+                endDot.setAttribute('r', '4.5');
                 endDot.setAttribute('fill', color);
                 endDot.setAttribute('stroke', '#ffffff');
-                endDot.setAttribute('stroke-width', '1.8');
+                endDot.setAttribute('stroke-width', '1.6');
                 svg.appendChild(endDot);
             });
         }
