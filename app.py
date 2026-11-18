@@ -190,6 +190,7 @@ HTML_TEMPLATE = r"""
     <title>الأكاديمية الذكية Pro | المنصة التربوية والعلمية</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script>
         window.MathJax = {
             tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']], processEscapes: true },
@@ -1104,30 +1105,83 @@ HTML_TEMPLATE = r"""
             reader.readAsDataURL(file);
         }
 
+        async function extractPptxInBrowser(file) {
+            if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
+            const zip = await JSZip.loadAsync(file);
+            const slideFiles = Object.keys(zip.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f));
+            slideFiles.sort((a, b) => parseInt(a.match(/slide(\d+)\.xml/)[1]) - parseInt(b.match(/slide(\d+)\.xml/)[1]));
+            const parser = new DOMParser();
+            const textRuns = [];
+            for (let i = 0; i < slideFiles.length; i++) {
+                const sPath = slideFiles[i];
+                const sNum = sPath.match(/slide(\d+)\.xml/)[1];
+                const xmlStr = await zip.file(sPath).async('string');
+                const xmlDoc = parser.parseFromString(xmlStr, 'application/xml');
+                const texts = Array.from(xmlDoc.getElementsByTagName('*'))
+                    .filter(el => el.localName === 't' && el.textContent.trim())
+                    .map(el => el.textContent.trim());
+                const nPath = `ppt/notesSlides/notesSlide${sNum}.xml`;
+                let notes = [];
+                if (zip.file(nPath)) {
+                    const nXmlStr = await zip.file(nPath).async('string');
+                    const nDoc = parser.parseFromString(nXmlStr, 'application/xml');
+                    notes = Array.from(nDoc.getElementsByTagName('*'))
+                        .filter(el => el.localName === 't' && el.textContent.trim())
+                        .map(el => el.textContent.trim());
+                }
+                let combined = texts.join(' | ');
+                if (notes.length) combined += ' [Notes: ' + notes.join(' | ') + ']';
+                if (combined.trim()) textRuns.push(`[Slide ${i + 1}]: ${combined}`);
+            }
+            return textRuns.join('\n');
+        }
+
         async function handleNcmFile(input) {
             const file = input.files[0];
             if (!file) return;
             ncmUploadedFilename = file.name;
             document.title = file.name.replace(/\.[^/.]+$/, '');
             autofillMetaFromFilename(file.name);
-            document.getElementById('ncmFileName').innerText = "✅ " + formatShortName(file.name);
+            const labelEl = document.getElementById('ncmFileName');
+            labelEl.innerText = "⏳ جاري قراءة الملف: " + formatShortName(file.name);
             document.getElementById('ncmClearBtn').classList.remove('hidden');
+
             if (file.name.toLowerCase().endsWith('.pptx')) {
-                const fd = new FormData(); fd.append('file', file);
-                const res = await fetch('/extract_pptx', { method: 'POST', body: fd });
-                const data = await res.json();
-                if (data.text) { document.getElementById('ncmTextInput').value = data.text; ncmBase64 = null; }
+                try {
+                    const extracted = await extractPptxInBrowser(file);
+                    document.getElementById('ncmTextInput').value = extracted;
+                    ncmBase64 = null; ncmMime = null;
+                    labelEl.innerText = "✅ " + formatShortName(file.name);
+                } catch (err) {
+                    const fd = new FormData(); fd.append('file', file);
+                    const res = await fetch('/extract_pptx', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    if (data.text) { document.getElementById('ncmTextInput').value = data.text; ncmBase64 = null; }
+                    labelEl.innerText = "✅ " + formatShortName(file.name);
+                }
                 return;
             }
             if (file.type === 'application/pdf') {
                 const reader = new FileReader();
-                reader.onload = e => { ncmBase64 = e.target.result.split(',')[1]; ncmMime = 'application/pdf'; };
+                reader.onload = e => {
+                    ncmBase64 = e.target.result.split(',')[1];
+                    ncmMime = 'application/pdf';
+                    labelEl.innerText = "✅ " + formatShortName(file.name);
+                };
                 reader.readAsDataURL(file);
             } else if (file.type.startsWith('image/')) {
-                compressImageFile(file, (b, m) => { ncmBase64 = b; ncmMime = m; });
+                compressImageFile(file, (b, m) => {
+                    ncmBase64 = b;
+                    ncmMime = m;
+                    labelEl.innerText = "✅ " + formatShortName(file.name);
+                });
             } else {
                 const reader = new FileReader();
-                reader.onload = e => { document.getElementById('ncmTextInput').value = e.target.result; ncmBase64 = null; };
+                reader.onload = e => {
+                    document.getElementById('ncmTextInput').value = e.target.result;
+                    ncmBase64 = null;
+                    labelEl.innerText = "✅ " + formatShortName(file.name);
+                };
                 reader.readAsText(file);
             }
         }
@@ -1148,10 +1202,15 @@ HTML_TEMPLATE = r"""
             document.title = file.name.replace(/\.[^/.]+$/, '');
             document.getElementById(toolKey + 'ClearBtn').classList.remove('hidden');
             if (file.name.toLowerCase().endsWith('.pptx')) {
-                const fd = new FormData(); fd.append('file', file);
-                const res = await fetch('/extract_pptx', { method: 'POST', body: fd });
-                const data = await res.json();
-                if (data.text) document.getElementById(toolKey + 'Input').value = data.text;
+                try {
+                    const extracted = await extractPptxInBrowser(file);
+                    document.getElementById(toolKey + 'Input').value = extracted;
+                } catch (e) {
+                    const fd = new FormData(); fd.append('file', file);
+                    const res = await fetch('/extract_pptx', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    if (data.text) document.getElementById(toolKey + 'Input').value = data.text;
+                }
             } else if (file.type === 'application/pdf') {
                 const reader = new FileReader();
                 reader.onload = e => { toolFiles[toolKey] = { b64: e.target.result.split(',')[1], mime: 'application/pdf' }; };
