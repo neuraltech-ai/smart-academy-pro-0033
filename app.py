@@ -1108,32 +1108,249 @@ HTML_TEMPLATE = r"""
         async function extractPptxInBrowser(file) {
             if (typeof JSZip === 'undefined') throw new Error('JSZip not loaded');
             const zip = await JSZip.loadAsync(file);
-            const slideFiles = Object.keys(zip.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f));
-            slideFiles.sort((a, b) => parseInt(a.match(/slide(\d+)\.xml/)[1]) - parseInt(b.match(/slide(\d+)\.xml/)[1]));
             const parser = new DOMParser();
+
+            // قراءة أبعاد الشريحة القياسية من presentation.xml
+            let slideW = 12192000, slideH = 6858000;
+            if (zip.file('ppt/presentation.xml')) {
+                const pXml = await zip.file('ppt/presentation.xml').async('string');
+                const pDoc = parser.parseFromString(pXml, 'application/xml');
+                const sldSz = Array.from(pDoc.getElementsByTagName('*')).find(el => el.localName === 'sldSz');
+                if (sldSz) {
+                    slideW = parseInt(sldSz.getAttribute('cx') || slideW, 10);
+                    slideH = parseInt(sldSz.getAttribute('cy') || slideH, 10);
+                }
+            }
+
+            const slideFiles = Object.keys(zip.files).filter(f => /^ppt\/slides\/slide\d+\.xml$/.test(f));
+            slideFiles.sort((a, b) => parseInt(a.match(/slide(\d+)\.xml/)[1], 10) - parseInt(b.match(/slide(\d+)\.xml/)[1], 10));
+
+            function getChildByLocal(node, name) {
+                return Array.from(node.childNodes).find(c => c.nodeType === 1 && c.localName === name);
+            }
+
+            function getXfrm(prNode) {
+                if (!prNode) return null;
+                const xfrm = getChildByLocal(prNode, 'xfrm');
+                if (!xfrm) return null;
+                const off = getChildByLocal(xfrm, 'off');
+                const ext = getChildByLocal(xfrm, 'ext');
+                const chOff = getChildByLocal(xfrm, 'chOff');
+                const chExt = getChildByLocal(xfrm, 'chExt');
+                return {
+                    x: off ? parseInt(off.getAttribute('x') || '0', 10) : 0,
+                    y: off ? parseInt(off.getAttribute('y') || '0', 10) : 0,
+                    w: ext ? parseInt(ext.getAttribute('cx') || '0', 10) : 0,
+                    h: ext ? parseInt(ext.getAttribute('cy') || '0', 10) : 0,
+                    chx: chOff ? parseInt(chOff.getAttribute('x') || '0', 10) : 0,
+                    chy: chOff ? parseInt(chOff.getAttribute('y') || '0', 10) : 0,
+                    chw: chExt ? parseInt(chExt.getAttribute('cx') || '0', 10) : 0,
+                    chh: chExt ? parseInt(chExt.getAttribute('cy') || '0', 10) : 0
+                };
+            }
+
+            function applyTf(rect, tf) {
+                return {
+                    x: tf.ox + (rect.x - tf.chx) * tf.sx,
+                    y: tf.oy + (rect.y - tf.chy) * tf.sy,
+                    w: rect.w * tf.sx,
+                    h: rect.h * tf.sy
+                };
+            }
+
+            function extractParagraphsText(node) {
+                const paras = Array.from(node.getElementsByTagName('*')).filter(el => el.localName === 'p');
+                const lines = [];
+                for (const p of paras) {
+                    const tNodes = Array.from(p.getElementsByTagName('*')).filter(el => el.localName === 't');
+                    const line = tNodes.map(t => t.textContent).join('').replace(/\s+/g, ' ').trim();
+                    if (line) lines.push(line);
+                }
+                return lines.join(' — ');
+            }
+
+            function collectSlideItems(container, tf, items) {
+                for (const child of Array.from(container.childNodes)) {
+                    if (child.nodeType !== 1) continue;
+                    const ln = child.localName;
+                    if (ln === 'grpSp') {
+                        const gpr = getChildByLocal(child, 'grpSpPr');
+                        const gx = getXfrm(gpr);
+                        let nextTf = tf;
+                        if (gx && gx.w > 0 && gx.h > 0 && gx.chw > 0 && gx.chh > 0) {
+                            const mapped = applyTf(gx, tf);
+                            nextTf = {
+                                ox: mapped.x, oy: mapped.y,
+                                chx: gx.chx, chy: gx.chy,
+                                sx: mapped.w / gx.chw, sy: mapped.h / gx.chh
+                            };
+                        }
+                        collectSlideItems(child, nextTf, items);
+                    } else if (ln === 'sp') {
+                        const txt = extractParagraphsText(child);
+                        if (txt) {
+                            const spr = getChildByLocal(child, 'spPr');
+                            const xf = getXfrm(spr);
+                            const rect = xf ? applyTf(xf, tf) : { x: 0, y: 0, w: 0, h: 0 };
+                            items.push({ type: 'text', text: txt, ...rect });
+                        }
+                    } else if (ln === 'pic') {
+                        const spr = getChildByLocal(child, 'spPr');
+                        const xf = getXfrm(spr);
+                        const blip = Array.from(child.getElementsByTagName('*')).find(el => el.localName === 'blip');
+                        let rId = null;
+                        if (blip) {
+                            for (const attr of Array.from(blip.attributes)) {
+                                if (attr.localName === 'embed' || attr.name.endsWith(':embed')) {
+                                    rId = attr.value; break;
+                                }
+                            }
+                        }
+                        if (rId && xf && xf.w > 0 && xf.h > 0) {
+                            const rect = applyTf(xf, tf);
+                            items.push({ type: 'pic', rId, ...rect });
+                        }
+                    } else if (ln === 'graphicFrame') {
+                        const txt = extractParagraphsText(child);
+                        if (txt) {
+                            const xf = getXfrm(child);
+                            const rect = xf ? applyTf(xf, tf) : { x: 0, y: 0, w: 0, h: 0 };
+                            items.push({ type: 'text', text: txt, ...rect });
+                        }
+                    }
+                }
+            }
+
             const textRuns = [];
+            const planKeywords = ['مراحل الدرس', 'مراحل الحصة', 'تنظيم الحصة', 'تنظيم حصص', 'محطات الحصة', 'البرنامج', 'plan de la séance', 'étapes de la séance', 'déroulement', 'organisation'];
+            let bestPlanSlide = null;
+            let bestPlanScore = -1;
+
             for (let i = 0; i < slideFiles.length; i++) {
                 const sPath = slideFiles[i];
                 const sNum = sPath.match(/slide(\d+)\.xml/)[1];
                 const xmlStr = await zip.file(sPath).async('string');
                 const xmlDoc = parser.parseFromString(xmlStr, 'application/xml');
-                const texts = Array.from(xmlDoc.getElementsByTagName('*'))
-                    .filter(el => el.localName === 't' && el.textContent.trim())
-                    .map(el => el.textContent.trim());
+                const spTree = Array.from(xmlDoc.getElementsByTagName('*')).find(el => el.localName === 'spTree');
+
+                const items = [];
+                const rootTf = { ox: 0, oy: 0, chx: 0, chy: 0, sx: 1, sy: 1 };
+                if (spTree) collectSlideItems(spTree, rootTf, items);
+
+                // ترتيب النصوص عمودياً حسب السطور (Y) لتجميع العنوان والمدة على نفس السطر
+                const textItems = items.filter(it => it.type === 'text');
+                const rowTol = slideH * 0.045;
+                textItems.sort((a, b) => {
+                    if (Math.abs(a.y - b.y) > rowTol) return a.y - b.y;
+                    return b.x - a.x;
+                });
+
+                const texts = textItems.map(it => it.text);
                 const nPath = `ppt/notesSlides/notesSlide${sNum}.xml`;
                 let notes = [];
                 if (zip.file(nPath)) {
                     const nXmlStr = await zip.file(nPath).async('string');
                     const nDoc = parser.parseFromString(nXmlStr, 'application/xml');
-                    notes = Array.from(nDoc.getElementsByTagName('*'))
-                        .filter(el => el.localName === 't' && el.textContent.trim())
-                        .map(el => el.textContent.trim());
+                    const nText = extractParagraphsText(nDoc);
+                    if (nText) notes.push(nText);
                 }
+
                 let combined = texts.join(' | ');
                 if (notes.length) combined += ' [Notes: ' + notes.join(' | ') + ']';
                 if (combined.trim()) textRuns.push(`[Slide ${i + 1}]: ${combined}`);
+
+                // رصد شريحة "مراحل الدرس / تنظيم الحصة" ضمن أول 6 شرائح
+                if (i < 6) {
+                    const lower = combined.toLowerCase();
+                    let score = 0;
+                    for (const kw of planKeywords) {
+                        if (lower.includes(kw)) score += 10;
+                    }
+                    const picCount = items.filter(it => it.type === 'pic').length;
+                    if (score > 0 && picCount >= 2) score += 5;
+                    else if (i >= 1 && i <= 3 && picCount >= 3 && textItems.length >= 4) score += 2;
+
+                    if (score > bestPlanScore && picCount > 0) {
+                        bestPlanScore = score;
+                        bestPlanSlide = { sNum, items };
+                    }
+                }
             }
-            return textRuns.join('\n');
+
+            // رسم نسخة بصرية مصغّرة من شريحة "مراحل الدرس" (تضم صور الساعات + النصوص بمواقعها الحقيقية)
+            let planImageB64 = null;
+            if (bestPlanSlide && bestPlanScore >= 2) {
+                try {
+                    const relsPath = `ppt/slides/_rels/slide${bestPlanSlide.sNum}.xml.rels`;
+                    const relMap = {};
+                    if (zip.file(relsPath)) {
+                        const rXml = await zip.file(relsPath).async('string');
+                        const rDoc = parser.parseFromString(rXml, 'application/xml');
+                        for (const rel of Array.from(rDoc.getElementsByTagName('*')).filter(el => el.localName === 'Relationship')) {
+                            const id = rel.getAttribute('Id');
+                            const target = rel.getAttribute('Target') || '';
+                            if (id && target) {
+                                const resolved = target.startsWith('../') ? ('ppt/' + target.slice(3)) : (target.startsWith('ppt/') ? target : 'ppt/slides/' + target);
+                                relMap[id] = resolved;
+                            }
+                        }
+                    }
+
+                    const canvasW = 1000;
+                    const canvasH = Math.round(canvasW * (slideH / slideW));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = canvasW;
+                    canvas.height = canvasH;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, canvasW, canvasH);
+
+                    const sx = canvasW / slideW;
+                    const sy = canvasH / slideH;
+
+                    // 1) رسم جميع الصور المدمجة (خاصة صور الساعات والمدد) في مواقعها الدقيقة
+                    for (const it of bestPlanSlide.items.filter(x => x.type === 'pic')) {
+                        const mPath = relMap[it.rId];
+                        if (!mPath || !zip.file(mPath)) continue;
+                        const ext = mPath.split('.').pop().toLowerCase();
+                        const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
+                        if (!mimeMap[ext]) continue;
+                        const b64 = await zip.file(mPath).async('base64');
+                        await new Promise(resolve => {
+                            const img = new Image();
+                            img.onload = () => {
+                                ctx.drawImage(img, it.x * sx, it.y * sy, it.w * sx, it.h * sy);
+                                resolve();
+                            };
+                            img.onerror = resolve;
+                            img.src = `data:${mimeMap[ext]};base64,${b64}`;
+                        });
+                    }
+
+                    // 2) رسم نصوص الشريحة فوق مواقعها الحقيقية بوضوح تام
+                    ctx.textBaseline = 'middle';
+                    for (const it of bestPlanSlide.items.filter(x => x.type === 'text')) {
+                        if (it.w <= 0 || it.h <= 0) continue;
+                        const rx = it.x * sx, ry = it.y * sy, rw = it.w * sx, rh = it.h * sy;
+                        ctx.fillStyle = 'rgba(241, 245, 249, 0.88)';
+                        ctx.fillRect(rx, ry, rw, rh);
+                        ctx.strokeStyle = '#94a3b8';
+                        ctx.lineWidth = 1;
+                        ctx.strokeRect(rx, ry, rw, rh);
+                        const fSize = Math.max(13, Math.min(24, Math.round(rh * 0.45)));
+                        ctx.font = `bold ${fSize}px Cairo, Arial, sans-serif`;
+                        ctx.fillStyle = '#0f172a';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(it.text.slice(0, 70), rx + rw / 2, ry + rh / 2, rw - 8);
+                    }
+
+                    planImageB64 = canvas.toDataURL('image/jpeg', 0.86).split(',')[1];
+                } catch (renderErr) {
+                    console.warn('Plan slide visual render skipped:', renderErr);
+                }
+            }
+
+            return { text: textRuns.join('\n'), planImageB64 };
         }
 
         async function handleNcmFile(input) {
@@ -1143,14 +1360,19 @@ HTML_TEMPLATE = r"""
             document.title = file.name.replace(/\.[^/.]+$/, '');
             autofillMetaFromFilename(file.name);
             const labelEl = document.getElementById('ncmFileName');
-            labelEl.innerText = "⏳ جاري قراءة الملف: " + formatShortName(file.name);
+            labelEl.innerText = "⏳ جاري قراءة الملف والمدد الزمنية: " + formatShortName(file.name);
             document.getElementById('ncmClearBtn').classList.remove('hidden');
 
             if (file.name.toLowerCase().endsWith('.pptx')) {
                 try {
-                    const extracted = await extractPptxInBrowser(file);
-                    document.getElementById('ncmTextInput').value = extracted;
-                    ncmBase64 = null; ncmMime = null;
+                    const resObj = await extractPptxInBrowser(file);
+                    document.getElementById('ncmTextInput').value = resObj.text;
+                    if (resObj.planImageB64) {
+                        ncmBase64 = resObj.planImageB64;
+                        ncmMime = 'image/jpeg';
+                    } else {
+                        ncmBase64 = null; ncmMime = null;
+                    }
                     labelEl.innerText = "✅ " + formatShortName(file.name);
                 } catch (err) {
                     const fd = new FormData(); fd.append('file', file);
@@ -1203,8 +1425,8 @@ HTML_TEMPLATE = r"""
             document.getElementById(toolKey + 'ClearBtn').classList.remove('hidden');
             if (file.name.toLowerCase().endsWith('.pptx')) {
                 try {
-                    const extracted = await extractPptxInBrowser(file);
-                    document.getElementById(toolKey + 'Input').value = extracted;
+                    const resObj = await extractPptxInBrowser(file);
+                    document.getElementById(toolKey + 'Input').value = resObj.text;
                 } catch (e) {
                     const fd = new FormData(); fd.append('file', file);
                     const res = await fetch('/extract_pptx', { method: 'POST', body: fd });
@@ -1602,7 +1824,7 @@ Retourne UNIQUEMENT un objet JSON valide :
 أرجع JSON صالحاً فقط:
 {{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة المستنتج من الدرس'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[العنوان الحرفي من الشريحة]","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
 
-    parts = [{"text": system_prompt + "\n\nLesson Slides Content:\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and copy exact station titles and exact durations verbatim from the slides.")}]
+    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: If an attached image of the lesson plan/stages slide is provided, inspect every clock/timer icon visually in that image to copy the EXACT duration of EACH station verbatim alongside its EXACT station title, because timer icons in PowerPoint are embedded images):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and copy exact station titles and exact durations verbatim from the slides.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
