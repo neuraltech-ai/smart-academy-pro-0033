@@ -127,28 +127,28 @@ def parse_filename_metadata(filename):
 def sanitize_ncm_data(res_json):
     is_fr = (res_json.get('lang') or '').lower() == 'fr'
     if 'header_title' in res_json and res_json['header_title']:
-        # حذف أي مكونات فرعية بين قوسين مثل (Oral, Lecture, Écriture) من الترويسة
         res_json['header_title'] = re.sub(r'\s*\([^)]*\)', '', res_json['header_title']).strip()
     if is_fr and 'seance_ncm_badge' in res_json and res_json['seance_ncm_badge']:
         res_json['seance_ncm_badge'] = re.sub(r'Fiche(\s*N°)?', 'NCM', res_json['seance_ncm_badge'], flags=re.IGNORECASE)
     unit = "min" if is_fr else "د"
     stations = res_json.get('stations') or []
+    trans = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
     for st in stations:
+        if 'title' in st and st['title']:
+            st['title'] = re.sub(r'\s+', ' ', str(st['title'])).strip()
         raw_dur = str(st.get('duration') or '').strip()
-        trans = str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789')
         clean_dur = raw_dur.translate(trans)
         nums = re.findall(r'\d+', clean_dur)
         if nums:
             val = int(nums[0])
-            if val >= 60:
-                val = val // 10 if val >= 100 else 15
-            if val > 45:
-                val = 20
-            if val < 3:
+            # تصحيح تشوه القراءة البصرية فقط (مثل 150 -> 15 أو 255 -> 25) دون المساس بالمدد الحقيقية
+            if val >= 100:
+                val = val // 10
+            if val > 90:
+                val = 45
+            if val < 1:
                 val = 5
             st['duration'] = f"{val} {unit}"
-        else:
-            st['duration'] = f"10 {unit}"
     return res_json
 
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
@@ -1528,55 +1528,85 @@ def generate_ncm():
     uni = overrides.get('unite') or fn_meta.get('unite') or ''
     sem = overrides.get('semaine') or fn_meta.get('semaine') or ''
     sea = overrides.get('seance') or fn_meta.get('seance') or ''
-    if not overrides.get('ncm') and fn_meta.get('ncm'):
+    if not ncm_num and fn_meta.get('ncm'):
         ncm_num = fn_meta.get('ncm')
 
-    is_fr = filename.upper().startswith('FR') or (text and len(re.findall(r'[a-zA-Zéèêëàâîïôùûç]', text[:2500])) > len(re.findall(r'[\u0600-\u06FF]', text[:2500])))
+    is_fr = filename.upper().startswith('FR') or (
+        text and len(re.findall(r'[a-zA-Zéèêëàâîïôùûç]', text[:2500])) > len(re.findall(r'[\u0600-\u06FF]', text[:2500]))
+    )
 
     if is_fr:
         station_rule = (
-            f"Divise la séance en EXACTEMENT {stations} stations méthodologiques correspondant aux étapes clés du cours."
+            f"Retourne EXACTEMENT {stations} stations correspondant aux étapes du support."
             if stations > 0 else
-            "Détecte et extrais EXACTEMENT toutes les étapes/stations réelles présentes dans le support de cours (entre 4 et 6 stations : ex. Ouverture / Activités rituelles, Mise en situation / Modelage, Pratique guidée, Pratique autonome, Clôture)."
+            "Extrais EXACTEMENT le nombre réel de stations/étapes figurant sur la diapositive de plan/organisation de la séance (jusqu'à 6 stations maximum), sans fusionner ni inventer d'étapes."
         )
         system_prompt = f"""Tu es un inspecteur pédagogique expert de l'Enseignement Explicite (École Pionnière au Maroc).
-Analyse minutieusement le contenu du cours ci-joint et conçois une fiche méthodologique complète qui tient sur UNE SEULE page A4 paysage :
-1. RÈGLE DE LANGUE : Réponds 100% en FRANÇAIS ("lang": "fr"). Zéro mot en arabe.
-2. MÉTADONNÉES EXACTES (Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
-   - header_title : "[Matière uniquement, ex: Français ou Mathématiques, SANS sous-composantes entre parenthèses] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
-   - lesson_subtitle : "Enseignement explicite | [Titre exact de la leçon] (Livret : p. [numéro exact de page si mentionné])"
-   - objectives : Les objectifs d'apprentissage exacts formulés de manière concise.
-3. STATIONS, CONTENU PÉDAGOGIQUE RICHE ET DURÉES RÉELLES :
+Analyse minutieusement le contenu des diapositives ci-jointes et construis la carte pédagogique (NCM) avec une FIDÉLITÉ LITTÉRALE ABSOLUE aux diapositives :
+
+1. RÈGLE DE LANGUE ET STYLE :
+   - Réponds 100% en FRANÇAIS ("lang": "fr"). Zéro mot en arabe.
+   - Dans le texte rédigé, écris toujours « et » au lieu du symbole « & ».
+   - Utilise toujours « NCM » (jamais « Fiche »).
+
+2. RÈGLE STRICTE — TITRES EXACTS DES STATIONS (COPIE LITTÉRALE) :
+   - Repère d'abord la diapositive du plan/organisation de la séance et les diapositives de titre de chaque étape.
+   - Pour chaque station, le champ "title" DOIT reproduire MOT POUR MOT le titre exact écrit sur la diapositive.
+   - INTERDICTION ABSOLUE de reformuler, renommer ou remplacer le titre d'une diapositive par un titre générique qui ne figure pas dans le support.
+
+3. RÈGLE STRICTE — DURÉES EXACTES DES STATIONS (COPIE LITTÉRALE) :
+   - Pour chaque station, extrais la durée EXACTE écrite sur la diapositive (ex: "5 min", "10 min", "15 min", "20 min", "30 min", "40 min").
+   - INTERDICTION de modifier, arrondir ou redistribuer une durée explicitement mentionnée dans les diapositives. N'estime une durée que si elle est totalement absente du document.
    - {station_rule}
-   - RÈGLE STRICTE SUR LES DURÉES : La durée de chaque station DOIT être un nombre réaliste compris entre **5 min et 40 min** (ex: "5 min", "10 min", "15 min", "20 min"). N'écris JAMAIS des nombres aberrants comme 100 min ou 150 min !
-   - CONTENU DE CHAQUE STATION : Rédige exactement **3 puces pédagogiques riches, équilibrées et précises** ("label" : "text", 14 à 22 mots par puce) contenant les sous-étapes exactes, les exemples concrets du support (mots, phrases, calculs, pages du livret), le rôle de l'enseignant et la tâche des élèves.
+
+4. MÉTADONNÉES DE L'EN-TÊTE (valeurs fournies si présentes : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
+   - header_title : "[Matière uniquement ex: Français ou Mathématiques, SANS sous-composantes entre parenthèses] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
+   - lesson_subtitle : "Enseignement explicite | [Titre exact de la leçon] (Livret : p. [pages exactes mentionnées])"
+   - objectives : Les objectifs d'apprentissage exacts issus des diapositives.
+
+5. CONTENU PÉDAGOGIQUE DE CHAQUE STATION :
+   - Rédige 3 puces précises et fidèles aux diapositives de cette station uniquement ("label" : "text", 14 à 22 mots par puce) incluant les tâches exactes (Niveau 1 et Niveau 2 si classe multigrade), les exemples concrets (mots, phrases, calculs) et les numéros de pages du livret.
+
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit de la séance'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num})","livret_pages":"Livret : p. ...","stations":[{{"title":"...","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit de la séance'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre exact de la diapositive]","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
     else:
         station_rule = (
-            f"قسّم الحصة إلى ({stations}) محطات منهجية بالضبط تغطي كافة مراحل الدرس."
+            f"التزم باستخراج ({stations}) محطات بالضبط من مراحل الحصة الواردة في الشرائح."
             if stations > 0 else
-            "استخرج بدقة جميع المحطات والمراحل الفعلية الواردة في ملف الدرس (بين 4 إلى 6 محطات حسب بنية الحصة في المدرسة الرائدة)."
+            "استخرج العدد الحقيقي الدقيق للمحطات الواردة في شريحة تنظيم الحصة وعناوين الشرائح الفاصلة (بحد أقصى 6 محطات)، دون دمج محطتين مستقلتين أو إضافة محطة غير موجودة في الملف."
         )
         system_prompt = f"""أنت مفتش وخبير بيداغوجي في برنامج التعليم الصريح بالمدرسة الرائدة بالمغرب.
-حلّل محتوى الدرس المرفق بدقة متناهية وصمّم خطاطة بيداغوجية احترافية مصممة لتتسع في **صفحة A4 أفقية واحدة** بتناسق بصري كامل:
-1. قاعدة اللغة: رد باللغة العربية الفصحى 100% ("lang": "ar").
-2. استخراج بيانات الترويسة الدقيقة من الملف (المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
-   - header_title: "[المادة والمكون] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
-   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس] (الكراسة: ص. [رقم الصفحة الدقيق])"
-   - objectives: أهداف التعلم الدقيقة للحصة مصاغة بتركيز ووضوح.
-3. المحطات، المضمون البيداغوجي المتناسق، والمدد الزمنية المضبوطة:
-   - {station_rule}
-   - قاعدة صارمة للمدد الزمنية: استخرج المدة الدقيقة لكل محطة كما وردت في شريحة تنظيم الحصة (مثلاً: أنشطة اعتيادية 10 د، معجم 20 د، استماع وتحدث 20 د، قراءة 40 د، خط ونقل 15 د، اختتام 5 د). انتبه من التصاق حرف «د» بالرقم، وتأكد أن كل مدة بين **5 د و 45 د فقط**.
-   - المضمون البيداغوجي لكل محطة: اكتب داخل كل محطة **3 فقرات بيداغوجية متوازنة الطول وغنية بالمضمون** ("label": "text"، بحدود 15 إلى 24 كلمة للفقرة الواحدة) حتى تملأ المربع بتناسق تام، مع ذكر: الخطوات الفرعية الدقيقة (أو تفصيل مهام المستوى 1 والمستوى 2 في الأقسام المشتركة)، الكلمات البصرية والمفردات والحروف والأمثلة الفعلية المذكورة في الشرائح، وأرقام صفحات الكراسة.
-أرجع JSON صالحاً فقط:
-{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة المستنتج من الدرس'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"...","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+حلّل شرائح الدرس المرفقة بدقة متناهية وصمّم الخطاطة البيداغوجية بأمانة حرفية مطلقة لمحتوى الشرائح:
 
-    parts = [{"text": system_prompt + "\n\nLesson Content:\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly.")}]
+1. قاعدة اللغة:
+   - رد باللغة العربية الفصحى 100% ("lang": "ar").
+
+2. قاعدة صارمة — المطابقة الحرفية لعناوين المحطات:
+   - افحص أولاً شريحة «تنظيم الحصة / برنامج الحصة / المراحل» والشرائح الفاصلة بين كل نشاط وآخر.
+   - يجب أن يكون حقل "title" لكل محطة **مطابقاً حرفياً 100%** للعنوان المكتوب في الشريحة (مثل: «أنشطة اعتيادية»، «معجم»، «الاستماع والتحدث»، «قراءة»، «خط ونقل»... تماماً كما كُتب في الشريحة).
+   - يُمنع منعاً باتاً إعادة صياغة العنوان أو استبداله بمسميات عامة لم ترد في الشريحة (مثل تحويل «أنشطة اعتيادية» إلى «افتتاح الحصة» أو «التهيئة»).
+
+3. قاعدة صارمة — المطابقة الحرفية لمدد المحطات:
+   - استخرج **المدة الزمنية الدقيقة** لكل محطة تماماً كما وردت في شريحة تنظيم الحصة أو رأس الشريحة (مثال: `(10د)` -> `"10 د"`، `(20د)` -> `"20 د"`، `(40)` أو `(40د)` -> `"40 د"`، `(5د)` -> `"5 د"`).
+   - يُمنع منعاً باتاً تغيير أو تقريب أو إعادة توزيع أي مدة مذكورة صراحةً في الشرائح. لا تقدّر المدة إلا إذا كانت غير مذكورة إطلاقاً في أي شريحة.
+   - {station_rule}
+
+4. بيانات الترويسة الدقيقة (المعطيات المتوفرة: المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
+   - header_title: "[اسم المادة فقط دون مكونات فرعية بين قوسين] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
+   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس] (الكراسة: ص. [أرقام الصفحات الدقيقة الواردة في الشرائح])"
+   - objectives: أهداف التعلم الدقيقة كما وردت في شرائح الدرس.
+
+5. المضمون البيداغوجي داخل كل محطة:
+   - اكتب داخل كل محطة **3 فقرات بيداغوجية مركزة ومتناسقة** ("label": "text"، بحدود 14 إلى 22 كلمة للفقرة) مستخلصة حصراً من الشرائح التابعة لتلك المحطة، مع ذكر تفصيل المستوى 1 والمستوى 2 في الأقسام المشتركة، والكلمات البصرية والأمثلة الحرفية وأرقام صفحات الكراسة.
+
+أرجع JSON صالحاً فقط:
+{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة المستنتج من الدرس'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[العنوان الحرفي من الشريحة]","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+
+    parts = [{"text": system_prompt + "\n\nLesson Slides Content:\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and copy exact station titles and exact durations verbatim from the slides.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
-    raw_text, err = call_gemini_api(api_key, parts, json_mode=True, temperature=0.05, high_rigor=True)
+    raw_text, err = call_gemini_api(api_key, parts, json_mode=True, temperature=0.0, high_rigor=True)
     if err or not raw_text:
         return jsonify({'error': f'تعذر التوليد: {err}'})
     try:
