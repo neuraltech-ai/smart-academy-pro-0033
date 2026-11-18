@@ -149,6 +149,10 @@ def sanitize_ncm_data(res_json):
             if val < 1:
                 val = 5
             st['duration'] = f"{val} {unit}"
+        for b in (st.get('bullets') or []):
+            lbl = str(b.get('label') or '').strip().strip(':').strip()
+            if lbl.lower() in {'text', 'label', 'title', 'item', 'point', 'bullet', 'نص', 'عنوان'}:
+                b['label'] = ''
     return res_json
 
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
@@ -1494,7 +1498,7 @@ HTML_TEMPLATE = r"""
                 <li class="station-bullet-item" style="${borderSide}">
                     <span style="color: ${color};" class="font-black text-sm leading-none mt-1">●</span>
                     <div contenteditable="true" class="flex-1">
-                        ${b.label ? `<strong class="text-slate-900 font-extrabold">${b.label} : </strong>` : ''}
+                        ${(b.label && !/^(text|label|title|item|point|bullet)$/i.test(b.label.trim())) ? `<strong class="text-slate-900 font-extrabold">${b.label.trim()} : </strong>` : ''}
                         <span class="text-slate-700 font-semibold">${b.text || ''}</span>
                     </div>
                 </li>
@@ -1787,7 +1791,7 @@ Analyse minutieusement le contenu des diapositives ci-jointes et construis la ca
    - objectives : Les objectifs d'apprentissage exacts issus des diapositives.
 
 5. CONTENU PÉDAGOGIQUE DE CHAQUE STATION :
-   - Rédige 3 puces précises et fidèles aux diapositives de cette station uniquement ("label" : "text", 14 à 22 mots par puce) incluant les tâches exactes (Niveau 1 et Niveau 2 si classe multigrade), les exemples concrets (mots, phrases, calculs) et les numéros de pages du livret.
+   - Rédige 3 puces précises et fidèles aux diapositives de cette station uniquement (chaque puce comporte un champ "label" contenant un court sous-titre français de 2 à 3 mots comme « Modélisation » ou « Pratique guidée », et un champ "text" de 14 à 22 mots ; ne jamais écrire le mot littéral "text" ou "label" comme valeur !) incluant les tâches exactes (Niveau 1 et Niveau 2 si classe multigrade), les exemples concrets (mots, phrases, calculs) et les numéros de pages du livret.
 
 Retourne UNIQUEMENT un objet JSON valide :
 {{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit de la séance'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre exact de la diapositive]","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
@@ -1819,7 +1823,7 @@ Retourne UNIQUEMENT un objet JSON valide :
    - objectives: أهداف التعلم الدقيقة كما وردت في شرائح الدرس.
 
 5. المضمون البيداغوجي داخل كل محطة:
-   - اكتب داخل كل محطة **3 فقرات بيداغوجية مركزة ومتناسقة** ("label": "text"، بحدود 14 إلى 22 كلمة للفقرة) مستخلصة حصراً من الشرائح التابعة لتلك المحطة، مع ذكر تفصيل المستوى 1 والمستوى 2 في الأقسام المشتركة، والكلمات البصرية والأمثلة الحرفية وأرقام صفحات الكراسة.
+   - اكتب داخل كل محطة **3 فقرات بيداغوجية مركزة ومتناسقة** (لكل فقرة حقلان: "label" لعنوان فرعي عربي قصير من كلمتين مثل «النمذجة» أو «الملاحظة والتوقع»، وحقل "text" لتفصيل النشاط بحدود 14 إلى 22 كلمة؛ يُمنع تماماً كتابة كلمة text أو label كقيمة!) مستخلصة حصراً من الشرائح التابعة لتلك المحطة، مع ذكر تفصيل المستوى 1 والمستوى 2 في الأقسام المشتركة، والكلمات البصرية والأمثلة الحرفية وأرقام صفحات الكراسة.
 
 أرجع JSON صالحاً فقط:
 {{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة المستنتج من الدرس'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[العنوان الحرفي من الشريحة]","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
