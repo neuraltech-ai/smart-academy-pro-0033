@@ -21,7 +21,14 @@ def add_no_cache_headers(response):
 
 @app.route('/health')
 def health_check():
-    return jsonify({"status": "healthy", "alive": True}), 200
+    raw_keys = get_configured_api_keys() if 'get_configured_api_keys' in globals() else os.environ.get('GEMINI_API_KEY', '')
+    keys_list = [k.strip() for k in re.split(r'[\s,;]+', str(raw_keys or '')) if k.strip()]
+    return jsonify({
+        "status": "healthy",
+        "alive": True,
+        "active_keys_count": len(keys_list),
+        "rotation_enabled": len(keys_list) > 1
+    }), 200
 
 def keep_alive_ping():
     url = os.environ.get("RENDER_EXTERNAL_URL", "https://smart-academy-pro.onrender.com") + "/health"
