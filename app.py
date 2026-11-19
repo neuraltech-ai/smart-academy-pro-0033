@@ -188,6 +188,27 @@ def get_configured_api_keys(client_key=None):
                 keys.append(item)
     return ",".join(keys)
 
+def extract_json_object(raw_text):
+    if not raw_text:
+        return None
+    cleaned = re.sub(r'^```(?:json)?\s*', '', str(raw_text).strip(), flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*```$', '', cleaned).strip()
+    try:
+        obj = json.loads(cleaned)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    m = re.search(r'\{[\s\S]*\}', cleaned)
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+    return None
+
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
     keys = [k.strip() for k in re.split(r'[\s,;]+', str(api_key or '')) if k.strip()]
     if not keys:
@@ -195,43 +216,21 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
 
     random.shuffle(keys)
 
-    # جلب قائمة النماذج وبناء سلسلة متنوعة تضمن عدم الحصر في نماذج Pro فقط
-    avail = []
-    for k in keys[:2]:
-        try:
-            avail = get_available_models(k, high_rigor=high_rigor) or []
-            if avail:
-                break
-        except Exception:
-            continue
-
-    preferred_tiers = [
+    # البدء بالنماذج السريعة والدقيقة لتفادي انتهاء مهلة Vercel (60 ثانية)
+    candidate_models = [
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
     ]
-    candidate_models = []
-    if high_rigor:
-        pro_pick = next((m for m in avail if "2.5-pro" in m and "tts" not in m and "image" not in m), None)
-        if pro_pick:
-            candidate_models.append(pro_pick)
-    for m in preferred_tiers:
-        if m not in candidate_models:
-            candidate_models.append(m)
-    for m in avail:
-        if "flash" in m and "tts" not in m and "image" not in m and "audio" not in m and m not in candidate_models:
-            candidate_models.append(m)
-    candidate_models = candidate_models[:6]
 
-    gen_config = {
+    base_gen_config = {
         "temperature": temperature,
         "maxOutputTokens": 8192
     }
     if json_mode:
-        gen_config["responseMimeType"] = "application/json"
+        base_gen_config["responseMimeType"] = "application/json"
 
-    payload = {"contents": [{"parts": parts}], "generationConfig": gen_config}
     dead_keys = set()
     start_ts = time.time()
     last_error = ""
@@ -242,10 +241,16 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
             if current_key in dead_keys:
                 continue
             elapsed = time.time() - start_ts
-            if elapsed > 52:
+            if elapsed > 50:
                 break
-            req_timeout = max(12, min(40, int(55 - elapsed)))
+            req_timeout = max(12, min(26, int(55 - elapsed)))
             headers = {'Content-Type': 'application/json', 'x-goog-api-key': current_key}
+
+            req_gen_config = dict(base_gen_config)
+            if "2.5-flash" in model_name:
+                req_gen_config["thinkingConfig"] = {"thinkingBudget": 0}
+            payload = {"contents": [{"parts": parts}], "generationConfig": req_gen_config}
+
             try:
                 res = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
@@ -253,10 +258,34 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                     headers=headers,
                     timeout=req_timeout
                 )
+                # إعادة المحاولة مرة واحدة بدون thinkingConfig في حال عدم دعمه
+                if res.status_code == 400 and "thinkingConfig" in req_gen_config:
+                    req_gen_config.pop("thinkingConfig", None)
+                    payload = {"contents": [{"parts": parts}], "generationConfig": req_gen_config}
+                    res = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
+                        json=payload,
+                        headers=headers,
+                        timeout=req_timeout
+                    )
+
                 if res.status_code == 200:
                     res_data = res.json()
-                    if 'candidates' in res_data and res_data['candidates']:
-                        return res_data['candidates'][0]['content']['parts'][0]['text'], None
+                    cands = res_data.get('candidates') or []
+                    if cands:
+                        parts_list = cands[0].get('content', {}).get('parts') or []
+                        # استبعاد أجزاء التفكير الداخلي (thought) واستخراج النص الفعلي فقط
+                        text_chunks = [p.get('text', '') for p in parts_list if not p.get('thought') and p.get('text')]
+                        if not text_chunks:
+                            text_chunks = [p.get('text', '') for p in parts_list if p.get('text')]
+                        out_text = "\n".join(text_chunks).strip()
+                        if out_text:
+                            if json_mode and extract_json_object(out_text) is None:
+                                last_error = f"استجابة JSON غير مكتملة من {model_name}، جاري التبديل"
+                                continue
+                            return out_text, None
+                    last_error = f"استجابة فارغة من {model_name}"
+                    continue
                 elif res.status_code in (401, 403):
                     dead_keys.add(current_key)
                     last_error = "أحد المفاتيح غير صالح أو معطّل (403)"
@@ -273,7 +302,7 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                         if zero_limit_hits >= 2:
                             break
                     else:
-                        last_error = f"تم استنفاد حصة الطلبات مؤقتاً عبر جميع المفاتيح ({model_name})، حاول بعد دقيقة."
+                        last_error = f"تم استنفاد حصة الطلبات مؤقتاً ({model_name})، حاول بعد دقيقة."
                     continue
                 elif res.status_code == 404:
                     last_error = f"النموذج {model_name} غير متاح"
@@ -283,6 +312,9 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                         last_error = res.json().get('error', {}).get('message', f'HTTP {res.status_code}')
                     except Exception:
                         last_error = f'HTTP {res.status_code}'
+            except requests.exceptions.Timeout:
+                last_error = f"تأخرت استجابة {model_name}، تم الانتقال للنموذج الأسرع"
+                break
             except Exception as e:
                 last_error = str(e)
     return None, last_error or "تعذر الاتصال بالخادم، يرجى المحاولة بعد ثوانٍ."
@@ -1947,7 +1979,9 @@ Retourne UNIQUEMENT un objet JSON valide :
     if err or not raw_text:
         return jsonify({'error': f'تعذر التوليد: {err}'})
     try:
-        res_json = json.loads(re.search(r'\{[\s\S]*\}', raw_text).group(0))
+        res_json = extract_json_object(raw_text)
+        if not res_json:
+            return jsonify({'error': 'تعذر قراءة بنية الخطاطة من الاستجابة، يرجى المحاولة مرة أخرى.'})
         res_json = sanitize_ncm_data(res_json)
         if stations > 0 and 'stations' in res_json:
             res_json['stations'] = res_json['stations'][:stations]
