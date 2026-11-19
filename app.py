@@ -4,6 +4,7 @@ import os
 import json
 import re
 import time
+import random
 import zipfile
 import threading
 import xml.etree.ElementTree as ET
@@ -155,35 +156,95 @@ def sanitize_ncm_data(res_json):
                 b['label'] = ''
     return res_json
 
+def get_configured_api_keys(client_key=None):
+    """تجميع جميع مفاتيح API من واجهة المستخدم أو متغيرات البيئة في Vercel"""
+    raw_sources = []
+    if client_key and str(client_key).strip():
+        raw_sources.append(str(client_key).strip())
+    else:
+        for env_name in ('GEMINI_API_KEY', 'GEMINI_API_KEYS'):
+            val = os.environ.get(env_name, '').strip()
+            if val:
+                raw_sources.append(val)
+        # دعم المتغيرات المرقمة مثل GEMINI_API_KEY_1, GEMINI_API_KEY_2 ...
+        for k, v in sorted(os.environ.items()):
+            if k.startswith('GEMINI_API_KEY_') and v and v.strip():
+                raw_sources.append(v.strip())
+
+    keys = []
+    seen = set()
+    for src in raw_sources:
+        for item in re.split(r'[\s,;]+', src):
+            item = item.strip()
+            if item and item not in seen:
+                seen.add(item)
+                keys.append(item)
+    return ",".join(keys)
+
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
-    candidate_models = get_available_models(api_key, high_rigor=high_rigor)
+    keys = [k.strip() for k in re.split(r'[\s,;]+', str(api_key or '')) if k.strip()]
+    if not keys:
+        return None, "لا يوجد مفتاح API متاح"
+
+    # توزيع متوازن للضغط بين جميع المفاتيح مع كل طلب
+    random.shuffle(keys)
+
+    # جلب قائمة النماذج مرة واحدة من أول مفتاح صالح
+    candidate_models = get_available_models(keys[0], high_rigor=high_rigor)[:3]
+    if not candidate_models:
+        candidate_models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+
     gen_config = {
         "temperature": temperature,
         "maxOutputTokens": 8192
     }
     if json_mode:
         gen_config["responseMimeType"] = "application/json"
+
     payload = {"contents": [{"parts": parts}], "generationConfig": gen_config}
-    headers = {'Content-Type': 'application/json', 'x-goog-api-key': api_key}
+    dead_keys = set()
+    start_ts = time.time()
     last_error = ""
-    for attempt in range(2):
-        for model_name in candidate_models:
+
+    # تجربة النموذج الأقوى عبر جميع المفاتيح أولاً، ثم الانتقال للنموذج الاحتياطي عند امتلاء الحصة
+    for model_name in candidate_models:
+        for current_key in keys:
+            if current_key in dead_keys:
+                continue
+            elapsed = time.time() - start_ts
+            if elapsed > 52:
+                break
+            req_timeout = max(12, min(42, int(55 - elapsed)))
+            headers = {'Content-Type': 'application/json', 'x-goog-api-key': current_key}
             try:
                 res = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
                     json=payload,
                     headers=headers,
-                    timeout=90
+                    timeout=req_timeout
                 )
-                res_data = res.json()
-                if res.status_code == 200 and 'candidates' in res_data:
-                    return res_data['candidates'][0]['content']['parts'][0]['text'], None
+                if res.status_code == 200:
+                    res_data = res.json()
+                    if 'candidates' in res_data and res_data['candidates']:
+                        return res_data['candidates'][0]['content']['parts'][0]['text'], None
+                elif res.status_code in (401, 403):
+                    dead_keys.add(current_key)
+                    last_error = "أحد المفاتيح غير صالح أو معطّل"
+                    continue
+                elif res.status_code == 429:
+                    last_error = "تم بلوغ حد الطلبات المؤقت (جاري التبديل للمفتاح التالي)"
+                    continue
+                elif res.status_code == 404:
+                    last_error = f"النموذج {model_name} غير متاح"
+                    break
                 else:
-                    last_error = res_data.get('error', {}).get('message', 'خطأ في الاستجابة')
-                    time.sleep(0.4)
+                    try:
+                        last_error = res.json().get('error', {}).get('message', f'HTTP {res.status_code}')
+                    except Exception:
+                        last_error = f'HTTP {res.status_code}'
             except Exception as e:
                 last_error = str(e)
-    return None, last_error
+    return None, last_error or "تعذر الاتصال بالخادم، يرجى المحاولة بعد ثوانٍ."
 
 HTML_TEMPLATE = r"""
 <!DOCTYPE html>
@@ -1743,7 +1804,7 @@ def generate_ncm():
     overrides = data.get('meta_overrides') or {}
     file_b64 = data.get('file_b64')
     mime_type = data.get('mime_type')
-    api_key = (data.get('api_key') or os.environ.get('GEMINI_API_KEY') or '').strip()
+    api_key = get_configured_api_keys(data.get('api_key'))
 
     if not api_key:
         return jsonify({'error': 'يرجى إدخال مفتاح API (بالنقر 5 مرات على شعار القبعة 🎓 أعلى اليمين).', 'need_key': True})
@@ -1852,7 +1913,7 @@ def smart_tool():
     options = data.get('options') or {}
     file_b64 = data.get('file_b64')
     mime_type = data.get('mime_type')
-    api_key = (data.get('api_key') or os.environ.get('GEMINI_API_KEY') or '').strip()
+    api_key = get_configured_api_keys(data.get('api_key'))
     if not api_key:
         return jsonify({'error': 'يرجى إدخال مفتاح API (بالنقر 5 مرات على شعار القبعة 🎓 أعلى اليمين).', 'need_key': True})
 
