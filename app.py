@@ -193,13 +193,36 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
     if not keys:
         return None, "لا يوجد مفتاح API متاح"
 
-    # توزيع متوازن للضغط بين جميع المفاتيح مع كل طلب
     random.shuffle(keys)
 
-    # جلب قائمة النماذج مرة واحدة من أول مفتاح صالح
-    candidate_models = get_available_models(keys[0], high_rigor=high_rigor)[:3]
-    if not candidate_models:
-        candidate_models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]
+    # جلب قائمة النماذج وبناء سلسلة متنوعة تضمن عدم الحصر في نماذج Pro فقط
+    avail = []
+    for k in keys[:2]:
+        try:
+            avail = get_available_models(k, high_rigor=high_rigor) or []
+            if avail:
+                break
+        except Exception:
+            continue
+
+    preferred_tiers = [
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+    ]
+    candidate_models = []
+    if high_rigor:
+        pro_pick = next((m for m in avail if "2.5-pro" in m and "tts" not in m and "image" not in m), None)
+        if pro_pick:
+            candidate_models.append(pro_pick)
+    for m in preferred_tiers:
+        if m not in candidate_models:
+            candidate_models.append(m)
+    for m in avail:
+        if "flash" in m and "tts" not in m and "image" not in m and "audio" not in m and m not in candidate_models:
+            candidate_models.append(m)
+    candidate_models = candidate_models[:6]
 
     gen_config = {
         "temperature": temperature,
@@ -213,15 +236,15 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
     start_ts = time.time()
     last_error = ""
 
-    # تجربة النموذج الأقوى عبر جميع المفاتيح أولاً، ثم الانتقال للنموذج الاحتياطي عند امتلاء الحصة
     for model_name in candidate_models:
+        zero_limit_hits = 0
         for current_key in keys:
             if current_key in dead_keys:
                 continue
             elapsed = time.time() - start_ts
             if elapsed > 52:
                 break
-            req_timeout = max(12, min(42, int(55 - elapsed)))
+            req_timeout = max(12, min(40, int(55 - elapsed)))
             headers = {'Content-Type': 'application/json', 'x-goog-api-key': current_key}
             try:
                 res = requests.post(
@@ -236,10 +259,21 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                         return res_data['candidates'][0]['content']['parts'][0]['text'], None
                 elif res.status_code in (401, 403):
                     dead_keys.add(current_key)
-                    last_error = "أحد المفاتيح غير صالح أو معطّل"
+                    last_error = "أحد المفاتيح غير صالح أو معطّل (403)"
                     continue
                 elif res.status_code == 429:
-                    last_error = "تم بلوغ حد الطلبات المؤقت (جاري التبديل للمفتاح التالي)"
+                    msg = ""
+                    try:
+                        msg = res.json().get('error', {}).get('message', '')
+                    except Exception:
+                        pass
+                    if "limit: 0" in msg.lower():
+                        zero_limit_hits += 1
+                        last_error = f"النموذج {model_name} غير مشمول في الباقة المجانية"
+                        if zero_limit_hits >= 2:
+                            break
+                    else:
+                        last_error = f"تم استنفاد حصة الطلبات مؤقتاً عبر جميع المفاتيح ({model_name})، حاول بعد دقيقة."
                     continue
                 elif res.status_code == 404:
                     last_error = f"النموذج {model_name} غير متاح"
