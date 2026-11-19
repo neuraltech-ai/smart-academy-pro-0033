@@ -219,6 +219,18 @@ def sanitize_ncm_data(res_json):
             lbl = str(b.get('label') or '').strip().strip(':').strip()
             if lbl.lower() in {'text', 'label', 'title', 'item', 'point', 'bullet', 'نص', 'عنوان'}:
                 b['label'] = ''
+    obj_txt = str(res_json.get('objectives') or '').strip()
+    obj_txt = obj_txt.replace('>=', '≥').replace('<=', '≤')
+    obj_txt = re.sub(r"^(?:Objectifs?\s+d['’]apprentissage\s*[:：-]?\s*)+", '', obj_txt, flags=re.IGNORECASE).strip()
+    obj_txt = re.sub(r"^(?:Objectifs?\s+de\s+la\s+séance\s*)", '', obj_txt, flags=re.IGNORECASE).strip()
+    obj_txt = re.sub(r"^(?:الأهداف\s+التعلمية\s*[:：-]?\s*|أهداف\s+التعلم\s*[:：-]?\s*|أهداف\s+الحصة\s*[:：-]?\s*)+", '', obj_txt).strip()
+    res_json['objectives'] = obj_txt
+    for st in (res_json.get('stations') or []):
+        for b in (st.get('bullets') or []):
+            if b.get('text'):
+                b['text'] = str(b['text']).replace('>=', '≥').replace('<=', '≤').strip()
+            if b.get('label'):
+                b['label'] = str(b['label']).replace('>=', '≥').replace('<=', '≤').strip()
     return res_json
 
 def get_configured_api_keys(client_key=None):
@@ -267,7 +279,7 @@ def extract_json_object(raw_text):
             pass
     return None
 
-def discover_live_models(keys):
+def discover_live_models(keys, high_rigor=False):
     """جلب النماذج النشطة وبناء سلسلة متوازنة تجمع بين Flash و Flash-Lite لتفادي ازدحام 503"""
     bad_tokens = (
         "tts", "image", "audio", "embedding", "aqa", "imagen", "veo",
@@ -302,15 +314,25 @@ def discover_live_models(keys):
     if not found:
         return ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3-flash-preview"]
 
-    # ترتيب ذكي يمزج بين Flash و Flash-Lite لتفادي التوقف عند ازدحام خادم واحد
-    priority_order = [
-        "gemini-flash-lite-latest",
-        "gemini-3.1-flash-lite",
-        "gemini-flash-latest",
-        "gemini-3-flash-preview",
-        "gemini-2.5-flash-lite",
-        "gemini-2.5-flash",
-    ]
+    # للخطاطات (high_rigor) نقدم النماذج الأقوى بصرياً لقراءة الساعات بدقة، ثم Flash-Lite كبديل فوري عند 503
+    if high_rigor:
+        priority_order = [
+            "gemini-flash-latest",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash",
+            "gemini-flash-lite-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-2.5-flash-lite",
+        ]
+    else:
+        priority_order = [
+            "gemini-flash-lite-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-flash-latest",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-flash",
+        ]
     ordered = [m for m in priority_order if m in found]
     for m in found:
         if "lite" in m.lower() and m not in ordered:
@@ -336,7 +358,7 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
         return None, "لا يوجد مفتاح API متاح"
 
     random.shuffle(keys)
-    candidate_models = discover_live_models(keys)
+    candidate_models = discover_live_models(keys, high_rigor=high_rigor)
 
     base_gen_config = {
         "temperature": temperature,
@@ -878,7 +900,59 @@ HTML_TEMPLATE = r"""
                 page-break-inside: avoid;
             }
         }
-    </style>
+    
+/* === NCM PRO LAYOUT & VISUAL POLISH === */
+.ncm-pro-sheet {
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+.ncm-pro-objectives {
+  flex-shrink: 0 !important;
+  position: relative !important;
+  z-index: 30 !important;
+  margin-bottom: 8px !important;
+  padding: 6px 12px !important;
+  line-height: 1.32 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06) !important;
+}
+.ncm-pro-body {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  position: relative !important;
+  overflow: hidden !important;
+  margin-top: 0 !important;
+  padding-top: 4px !important;
+  padding-bottom: 6px !important;
+  align-items: stretch !important;
+}
+.ncm-pro-col {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-evenly !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  box-sizing: border-box !important;
+}
+.ncm-pro-card {
+  border-radius: 10px !important;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08) !important;
+  overflow: hidden !important;
+  flex-shrink: 0 !important;
+}
+.ncm-pro-card ul {
+  margin: 0 !important;
+}
+.ncm-pro-card li {
+  margin-bottom: 4px !important;
+}
+.ncm-pro-card li:last-child {
+  margin-bottom: 0 !important;
+}
+
+</style>
 </head>
 <body class="p-3 md:p-6">
     <div class="max-w-6xl mx-auto no-print mb-6">
@@ -1978,6 +2052,153 @@ HTML_TEMPLATE = r"""
         }
         window.addEventListener('resize', fitNcmToSinglePage);
     </script>
+
+<script id="ncm-pro-autofit">
+(function() {
+  let isFitting = false;
+  function findObjectivesEl() {
+    const candidates = Array.from(document.querySelectorAll('div, section, p')).filter(el => {
+      if (el.children.length > 4) return false;
+      const t = (el.textContent || '').trim();
+      if (t.length < 25 || t.length > 650) return false;
+      return /^(Objectifs d['’]apprentissage|أهداف التعلم|الأهداف التعلمية)/i.test(t);
+    });
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => a.innerHTML.length - b.innerHTML.length);
+    return candidates[0];
+  }
+
+  function autoFitNcmPro() {
+    if (isFitting) return;
+    const objEl = findObjectivesEl();
+    if (!objEl || !objEl.parentElement) return;
+    const sheetEl = objEl.parentElement;
+    const bodyEl = objEl.nextElementSibling;
+    if (!bodyEl) return;
+
+    const uls = Array.from(bodyEl.querySelectorAll('ul'));
+    if (!uls.length) return;
+
+    isFitting = true;
+    try {
+      sheetEl.classList.add('ncm-pro-sheet');
+      objEl.classList.add('ncm-pro-objectives');
+      bodyEl.classList.add('ncm-pro-body');
+
+      // رصد الأعمدة التي تحتوي على بطاقات المحطات
+      const cardSet = new Set();
+      const colSet = new Set();
+      uls.forEach(ul => {
+        let node = ul;
+        while (node && node.parentElement && node.parentElement !== bodyEl) {
+          if (node.parentElement.parentElement === bodyEl) {
+            cardSet.add(node);
+            colSet.add(node.parentElement);
+            break;
+          }
+          node = node.parentElement;
+        }
+      });
+
+      const cards = Array.from(cardSet);
+      const cols = Array.from(colSet);
+      cards.forEach(c => c.classList.add('ncm-pro-card'));
+      cols.forEach(col => {
+        col.classList.add('ncm-pro-col');
+        col.style.transform = '';
+        col.style.justifyContent = 'space-evenly';
+      });
+
+      // مستويات تدرج احترافية لضمان احتواء البطاقات بالكامل دون قصّ أو تداخل
+      const presets = [
+        { objFs: 11.2, fs: 11.0, lh: 1.34, hdrFs: 12.2, hdrPad: '6px 11px', bodyPad: '8px 11px', gap: 10, liMb: 4 },
+        { objFs: 10.6, fs: 10.3, lh: 1.29, hdrFs: 11.6, hdrPad: '5px 10px', bodyPad: '7px 10px', gap: 8,  liMb: 3.5 },
+        { objFs: 10.2, fs: 9.7,  lh: 1.24, hdrFs: 11.0, hdrPad: '5px 10px', bodyPad: '6px 10px', gap: 7,  liMb: 3 },
+        { objFs: 9.8,  fs: 9.2,  lh: 1.20, hdrFs: 10.5, hdrPad: '4px 9px',  bodyPad: '5px 9px',  gap: 6,  liMb: 2.5 },
+        { objFs: 9.4,  fs: 8.7,  lh: 1.16, hdrFs: 10.0, hdrPad: '4px 8px',  bodyPad: '4.5px 8px',gap: 5,  liMb: 2 },
+        { objFs: 9.0,  fs: 8.2,  lh: 1.13, hdrFs: 9.6,  hdrPad: '3.5px 8px',bodyPad: '4px 8px',  gap: 4,  liMb: 1.5 }
+      ];
+
+      let fitted = false;
+      for (const p of presets) {
+        objEl.style.fontSize = p.objFs + 'px';
+        cols.forEach(col => { col.style.gap = p.gap + 'px'; });
+        cards.forEach(card => {
+          const kids = Array.from(card.children);
+          if (kids[0]) {
+            kids[0].style.fontSize = p.hdrFs + 'px';
+            kids[0].style.padding = p.hdrPad;
+          }
+          if (kids[1]) {
+            kids[1].style.padding = p.bodyPad;
+            kids[1].style.fontSize = p.fs + 'px';
+            kids[1].style.lineHeight = String(p.lh);
+          }
+          card.querySelectorAll('li').forEach(li => {
+            li.style.fontSize = p.fs + 'px';
+            li.style.lineHeight = String(p.lh);
+            li.style.marginBottom = p.liMb + 'px';
+          });
+        });
+
+        const availH = bodyEl.clientHeight - 6;
+        if (availH <= 80) break;
+        const allFit = cols.every(col => {
+          const needed = Array.from(col.children).reduce((s, ch) => s + ch.offsetHeight, 0) + Math.max(0, col.children.length - 1) * p.gap;
+          return needed <= availH && col.scrollHeight <= col.clientHeight + 1;
+        });
+        if (allFit) {
+          fitted = true;
+          break;
+        }
+      }
+
+      // شبكة أمان نهائية في حال وجود نص استثنائي الطول
+      if (!fitted) {
+        const availH = bodyEl.clientHeight - 8;
+        cols.forEach(col => {
+          if (availH > 80 && col.scrollHeight > availH) {
+            const ratio = Math.max(0.76, availH / col.scrollHeight);
+            col.style.justifyContent = 'flex-start';
+            col.style.transformOrigin = 'top center';
+            col.style.transform = 'scale(' + ratio.toFixed(3) + ')';
+          }
+        });
+      }
+
+      // تحديث أسهم الربط SVG بعد ضبط التموضع
+      setTimeout(() => {
+        ['drawConnectors', 'drawLines', 'renderConnectors', 'updateConnectors', 'drawSvgLines'].forEach(fn => {
+          if (typeof window[fn] === 'function') {
+            try { window[fn](); } catch (e) {}
+          }
+        });
+        try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+      }, 40);
+    } finally {
+      setTimeout(() => { isFitting = false; }, 120);
+    }
+  }
+
+  let timer = null;
+  const obs = new MutationObserver(() => {
+    if (isFitting) return;
+    clearTimeout(timer);
+    timer = setTimeout(autoFitNcmPro, 90);
+  });
+  window.addEventListener('DOMContentLoaded', () => {
+    obs.observe(document.body, { childList: true, subtree: true });
+    setTimeout(autoFitNcmPro, 250);
+  });
+  document.addEventListener('click', (e) => {
+    const txt = (e.target && e.target.textContent || '').toLowerCase();
+    if (txt.includes('pdf') || txt.includes('تحميل') || txt.includes('طباعة') || txt.includes('تصدير')) {
+      autoFitNcmPro();
+    }
+  }, true);
+})();
+</script>
+
 </body>
 </html>
 """
@@ -2024,79 +2245,70 @@ def generate_ncm():
         station_rule = (
             f"Retourne EXACTEMENT {stations} stations correspondant aux étapes du support."
             if stations > 0 else
-            "Extrais EXACTEMENT le nombre réel de stations figurant sur la diapositive de plan/organisation et les diapositives titres (jusqu'à 6 maximum), sans fusionner ni inventer d'étapes."
+            "Extrais EXACTEMENT le nombre réel de stations figurant sur la diapositive de plan/organisation (jusqu'à 6 maximum), sans fusionner ni inventer d'étapes."
         )
         system_prompt = f"""Tu es un inspecteur pédagogique expert de l'Enseignement Explicite (École Pionnière au Maroc).
-Analyse minutieusement TOUTES les diapositives et construis une fiche NCM opérationnelle d'une FIDÉLITÉ LITTÉRALE ABSOLUE au support :
+Construis une fiche NCM CONCISE, OPÉRATIONNELLE et D'UNE FIDÉLITÉ LITTÉRALE ABSOLUE au support, conçue pour tenir proprement sur UNE SEULE page A4 paysage :
 
 1. LANGUE ET CONVENTIONS STRICTES :
-   - Réponds 100% en FRANÇAIS ("lang": "fr"). Zéro mot en arabe.
-   - Écris toujours « et » au lieu de « & ». Utilise toujours « NCM » (jamais « Fiche »).
-   - Écris TOUJOURS les numéros de pages, d'activités et de durées en CHIFFRES (ex: "p. 23", "page 23", "Act. 1", "30 s", "1, 2 ou 3"), JAMAIS en toutes lettres ("vingt-trois" est interdit).
+   - 100% en FRANÇAIS ("lang": "fr"). Écris « et » (jamais « & »), « NCM » (jamais « Fiche »), et « ≥ » (jamais « >= »).
+   - Écris TOUJOURS les numéros de pages, activités et durées en CHIFFRES (ex: "p. 23", "Act. 1", "30 s", "1, 2 ou 3").
 
 2. TITRES DES STATIONS — COPIE LITTÉRALE STRICTE :
-   - Repère la diapositive de plan/étapes et les diapositives intercalaires qui annoncent chaque étape.
-   - Copie MOT POUR MOT le titre exact écrit dans les diapositives (ex: "Présentation du vocabulaire", "Exploitation du vocabulaire (Description)", "Activités de vocabulaire sur livret").
-   - INTERDICTION ABSOLUE d'inventer ou substituer des titres pédagogiques génériques qui ne figurent pas tels quels sur les diapositives (interdit d'écrire "Modelage et Pratique Guidée...", "Exploitation Orale...", "Pratique Autonome..." si ces mots ne sont pas le titre exact de la diapositive).
+   - Copie MOT POUR MOT le titre exact de chaque étape tel qu'écrit sur la diapositive de plan / intercalaires (ex: "Présentation du vocabulaire", "Exploitation du vocabulaire", "Activités de vocabulaire sur livret").
+   - INTERDIT d'inventer des titres génériques ("Modelage et Pratique Guidée", "Pratique Autonome"...).
 
-3. DURÉES DES STATIONS — COPIE LITTÉRALE STRICTE :
-   - Copie la durée EXACTE indiquée sur les diapositives ou sur les icônes d'horloge de l'image jointe (ex: "25 min", "20 min", "10 min"). Ne modifie ni ne redistribue aucune durée explicite.
+3. DURÉES DES STATIONS — LECTURE RIGOUREUSE DES ICÔNES HORLOGE :
+   - Lis avec une précision maximale le chiffre inscrit dans CHAQUE icône d'horloge/chronomètre sur la diapositive de plan (image jointe) ou dans le texte des diapositives.
+   - Copie EXACTEMENT ces durées (ex: 25 min, 20 min, 10 min = 55 min pour une séance de 55 min). Ne devine JAMAIS, ne réduis jamais de 5 min, et vérifie la cohérence avec la durée totale de la séance.
    - {station_rule}
 
-4. EN-TÊTE ET OBJECTIFS EXHAUSTIFS (Métadonnées : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
-   - header_title : "[Matière uniquement ex: Français ou Mathématiques, SANS parenthèses] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
-   - lesson_subtitle : "Enseignement explicite | [Intitulé exact de l'unité et du thème/leçon issu des diapositives] (Livret : p. [numéro en chiffres])"
-   - objectives : Commence par "Objectifs de la séance (seuil de maîtrise >= 80%) : " (ou le seuil mentionné dans les diapositives), puis énonce l'objectif exact EN LISTANT ENTRE PARENTHÈSES TOUS les mots, sons, notions ou structures cibles de la séance (interdit de résumer par "des objets du quotidien").
+4. EN-TÊTE ET OBJECTIFS CONCIS (Métadonnées : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
+   - header_title : "[Matière ex: Français ou Mathématiques] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
+   - lesson_subtitle : "Enseignement explicite | [Intitulé exact de la leçon issu des diapositives] (Livret : p. [numéro en chiffres])"
+   - objectives : ULTRA-CONCIS (18 à 28 mots maximum, 1 à 2 lignes). NE PAS répéter "Objectifs d'apprentissage" ni "Objectifs de la séance". Commence directement par "(seuil de maîtrise ≥ 80%) : Identifier, nommer et utiliser..." en listant entre parenthèses les mots cibles SANS AUCUN DOUBLON.
 
-5. CONTENU OPÉRATIONNEL ET EXHAUSTIF DES PUCES (Style fiche pratique de classe) :
-   - Pour chaque station, rédige 3 puces denses et fidèles aux diapositives de CETTE station (18 à 36 mots par puce).
-   - STYLE OBLIGATOIRE À L'INFINITIF : chaque champ "text" DOIT commencer par un verbe d'action à l'infinitif (ex: "Distinguer...", "Écrire le numéro (1, 2 ou 3)...", "Observer la scène pendant 30 s...", "Répondre aux questions...", "Passer individuellement au tableau...", "Ouvrir le livret à la page 23...", "Circuler entre les rangs...", "Réviser à la maison...").
-   - INTERDICTION ABSOLUE du style narratif vague ("L'enseignant présente...", "Les élèves observent...", "Le professeur vérifie...", "Les apprenants passent...", "des mots comme...", "des questions précises").
-   - EXTRACTION EXHAUSTIVE OBLIGATOIRE :
-     * Cite les noms exacts des vidéos et personnages présents dans les diapositives (ex: "vidéo Nada", "vidéo Majd x2", prénoms exacts).
-     * Liste TOUS les mots/exemples cibles par série (Série 1, Série 2...) et les mots exacts dictés sur les ardoises ou choisis à main levée.
-     * Cite mot pour mot les questions guidées de la scène (ex: "Qui est-ce ? Que fait-il ? ...") et leurs réponses clés.
-     * Cite le numéro et l'intitulé exact de l'activité du livret (ex: "Livret p. 23, Act. 1 « ... »"), les consignes/phrases exactes des élèves en binômes, et la clôture / devoir à la maison s'ils figurent en fin de séance.
-   - SOUS-TITRES ("label") PRÉCIS ET CONCRETS : utilise des sous-titres opérationnels tirés du contenu réel (ex: "Série 1 (vidéo + genre des noms)", "Vérification sur les ardoises", "Série 2 (vidéo + jeu du genre)", "Observation et modélisation", "Questions guidées sur la scène", "Prise de parole au tableau", "Pratique en binômes (Livret p. ..., Act. ...)", "Accompagnement individuel", "Clôture et devoir à la maison"). Ne jamais écrire le mot littéral "text" ou "label" comme valeur.
+5. PUCES COURTES, DENSES ET OPÉRATIONNELLES (IMPÉRATIF POUR TENIR SUR 1 PAGE A4) :
+   - Pour chaque station, rédige 3 puces COURTES et PERCUTANTES : **12 à 22 mots MAXIMUM** par champ "text" (2 à 3 lignes courtes max).
+   - STYLE TÉLÉGRAPHIQUE À L'INFINITIF : commence chaque "text" par un verbe à l'infinitif (ex: "Distinguer...", "Écrire sur l'ardoise...", "Observer la scène (30 s)...", "Répondre aux questions...", "Ouvrir le livret p. 23...", "Circuler entre les rangs...").
+   - SUPPRIME TOUT REMPLISSAGE VERBEUX ("en écoutant attentivement", "pour consolider les acquis de la leçon", "de la même manière que le personnage", "afin de permettre aux apprenants", "L'enseignant présente...", "Les élèves observent...").
+   - CONSERVE L'ESSENTIEL CONCRET SANS DOUBLONS : noms exacts des vidéos (Nada, Majd x2), liste exacte des mots cibles par série (SANS répéter un mot deux fois), questions clés mot pour mot, n° de page/activité du livret, consignes de binômes et devoir à la maison.
+   - "label" : sous-titre opérationnel court (2 à 5 mots, ex: "Série 1 (vidéo Nada)", "Vérification sur ardoises", "Observation (vidéo Majd x2)", "Questions guidées", "Prise de parole au tableau", "Binômes (Livret p. 23)", "Accompagnement", "Clôture et devoir"). Jamais "text" ou "label".
 
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT de la diapositive]","duration":"25 min","bullets":[{{"label":"Sous-titre opérationnel précis","text":"Verbe à l'infinitif + contenu exact et exhaustif de la diapositive..."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num or 'numéro'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT]","duration":"25 min","bullets":[{{"label":"Sous-titre court","text":"Verbe à l'infinitif + contenu exact en 12 à 22 mots max."}}]}}]}}"""
     else:
         station_rule = (
             f"التزم باستخراج ({stations}) محطات بالضبط من مراحل الحصة الواردة في الشرائح."
             if stations > 0 else
-            "استخرج العدد الحقيقي الدقيق للمحطات الواردة في شريحة «مراحل الدرس / تنظيم الحصة» والشرائح الفاصلة (بحد أقصى 6 محطات)، دون دمج محطتين مستقلتين أو إضافة محطة غير موجودة."
+            "استخرج العدد الحقيقي الدقيق للمحطات الواردة في شريحة «مراحل الدرس / تنظيم الحصة» (بحد أقصى 6 محطات) دون دمج أو اختراع."
         )
         system_prompt = f"""أنت مفتش وخبير بيداغوجي في برنامج التعليم الصريح بالمدرسة الرائدة بالمغرب.
-حلّل جميع شرائح الدرس المرفقة بدقة متناهية وصمّم الخطاطة البيداغوجية التشغيلية بأمانة حرفية مطلقة لمحتوى الشرائح:
+صمّم خطاطة بيداغوجية موجزة وعملية بأمانة حرفية مطلقة لتستقر بوضوح وتناسق داخل صفحة A4 واحدة:
 
-1. قاعدة اللغة والأرقام:
-   - رد باللغة العربية الفصحى 100% ("lang": "ar").
-   - اكتب أرقام الصفحات والأنشطة والمدد بالأرقام دائماً (مثال: ص. 22، النشاط 3، 10 د) وليس بالحروف.
+1. اللغة والأرقام:
+   - عربية فصحى 100% ("lang": "ar")، مع كتابة أرقام الصفحات والأنشطة والمدد بالأرقام دائماً (ص. 22، النشاط 3، 25 د) واستعمال الرمز ≥ بدل >=.
 
 2. عناوين المحطات — مطابقة حرفية مطلقة:
-   - افحص شريحة «مراحل الدرس / تنظيم الحصة» والشرائح الفاصلة.
-   - انسخ حقل "title" لكل محطة **حرفياً 100%** كما كُتب في الشريحة دون أي تغيير.
-   - يُمنع منعاً باتاً استبدال عنوان الشريحة بمسميات نظرية عامة (مثل «النمذجة والممارسة الموجهة» أو «الممارسة المستقلة») ما لم ترد حرفياً كعنوان للمحطة في الشريحة.
+   - انسخ حقل "title" لكل محطة حرفياً 100% كما ورد في شريحة تنظيم الحصة دون استبداله بمسميات نظرية عامة.
 
-3. مدد المحطات — مطابقة حرفية مطلقة:
-   - استخرج المدة الدقيقة لكل محطة كما وردت في الشريحة أو في صور الساعات المرفقة (مثال: `"10 د"`، `"25 د"`، `"20 د"`، `"5 د"`). يُمنع تعديل أو إعادة توزيع أي مدة صريحة.
+3. مدد المحطات — قراءة دقيقة لأيقونات الساعة:
+   - اقرأ الرقم الدقيق داخل كل أيقونة ساعة في صورة شريحة التنظيم أو نص الشرائح وانسخه حرفياً (مثال: 25 د، 20 د، 10 د) دون تخمين أو إنقاص، مع التحقق من مطابقة المجموع لمدة الحصة.
    - {station_rule}
 
-4. الترويسة والأهداف الشاملة (المعطيات: المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
-   - header_title: "[اسم المادة فقط دون قوسين] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
-   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس كما في الشرائح] (الكراسة: ص. [أرقام الصفحات])"
-   - objectives: أهداف التعلم الدقيقة مع ذكر عتبة التحكم إن وردت، وسرد المفاهيم أو الكلمات أو القواعد المستهدفة بدقة دون تعميم.
+4. الترويسة والأهداف الموجزة (المعطيات: المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
+   - header_title: "[اسم المادة فقط] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
+   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس] (الكراسة: ص. [الأرقام])"
+   - objectives: موجزة جداً (16 إلى 26 كلمة في سطر إلى سطرين) دون تكرار عبارة "أهداف التعلم" في البداية.
 
-5. المضمون التشغيلي والشامل داخل كل محطة:
-   - اكتب 3 فقرات عملية مركزة ومشبعة بالتفاصيل الحرفية لكل محطة (18 إلى 34 كلمة لكل فقرة).
-   - لكل فقرة حقلان: "label" لعنوان فرعي عملي دقيق من واقع النشاط (مثل «تصحيح الواجب»، «فيديو النمذجة»، «التحقق على الألواح»، «العمل في ثنائيات (ص. 20)»، «التتبع الفردي والواجب المنزلي»)، وحقل "text" يبدأ بفعل إجرائي أو مصدر مباشر دون حشو إنشائي. يُمنع تماماً كتابة كلمة text أو label كقيمة.
-   - اذكر كافة الكلمات البصرية، الأمثلة الحرفية، أسماء الفيديوهات، الأسئلة الموجهة، تفصيل المستوى 1 والمستوى 2 في الأقسام المشتركة، أرقام الأنشطة والصفحات، والواجب المنزلي الوارد في الشرائح.
+5. فقرات قصيرة ومركزة داخل كل محطة:
+   - اكتب 3 فقرات عملية موجزة ومشبعة بالمضامين الحرفية لكل محطة (**12 إلى 22 كلمة كحد أقصى لكل فقرة**)، تبدأ بفعل إجرائي أو مصدر مباشر دون حشو إنشائي أو تكرار.
+   - "label" عنوان فرعي عملي قصير (2 إلى 4 كلمات)، و"text" يتضمن الأمثلة الحرفية، أسماء الفيديوهات، الأسئلة، أرقام الأنشطة والصفحات، والواجب المنزلي بإيجاز احترافي.
 
 أرجع JSON صالحاً فقط:
-{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[العنوان الحرفي من الشريحة]","duration":"15 د","bullets":[{{"label":"عنوان فرعي عملي دقيق","text":"وصف إجرائي دقيق وشامل لمحتوى الشريحة..."}}]}}]}}"""
+{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[العنوان الحرفي]","duration":"25 د","bullets":[{{"label":"عنوان قصير","text":"صياغة إجرائية دقيقة وموجزة في 12 إلى 22 كلمة..."}}]}}]}}"""
 
-    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: If an attached image of the lesson plan/stages slide is provided, inspect every clock/timer icon visually in that image to copy the EXACT duration of EACH station verbatim alongside its EXACT station title, because timer icons in PowerPoint are embedded images):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and copy exact station titles, exact durations, and exhaustive concrete details verbatim from the slides.")}]
+    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: Inspect every clock/timer icon visually in the attached plan slide image to transcribe the EXACT number of minutes for EACH station verbatim — e.g. 25 min, 20 min, 10 min — and keep every bullet concise between 12 and 22 words so all cards fit cleanly on one A4 page):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and copy exact station titles, exact clock durations, and concise concrete details verbatim.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
