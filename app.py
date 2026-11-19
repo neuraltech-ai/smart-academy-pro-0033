@@ -2191,11 +2191,11 @@ Construis une fiche NCM CONCISE, OPÉRATIONNELLE et PROFESSIONNELLE d'une fidél
 
 1. LANGUE ET CONVENTIONS STRICTES :
    - 100% en FRANÇAIS ("lang": "fr"). Écris « et » (jamais « & »), « NCM » (jamais « Fiche »), et « ≥ » (jamais « >= »).
-   - Écris TOUJOURS les numéros de pages, exercices et durées en CHIFFRES (ex: "p. 23", "p. 40-41", "Act. 1", "30 s", "5 min").
+   - Écris TOUJOURS les numéros de pages, activités, exercices et durées en CHIFFRES (ex: "p. 23", "p. 40-41", "Act. 1", "Ex. 4", "30 s", "5 min").
 
 2. TITRES ET DURÉES DES STATIONS — COPIE LITTÉRALE ET CONTRÔLE ARITHMÉTIQUE :
    - Copie MOT POUR MOT le titre exact de chaque étape depuis la diapositive de plan / intercalaires (interdit d'inventer des titres génériques).
-   - Lis avec une précision maximale le chiffre inscrit dans CHAQUE icône d'horloge (distingue bien 5, 10, 15, 20, 25) et VÉRIFIE que la somme des durées correspond exactement à la durée totale de la séance (généralement 55 min en français ou 60 min en mathématiques).
+   - Lis avec une précision maximale le chiffre inscrit dans CHAQUE icône d'horloge (distingue bien 5, 10, 15, 20, 25) et VÉRIFIE que la somme des durées correspond exactement à la durée totale de la séance (55 min en français ou 60 min en mathématiques).
    - {station_rule}
 
 3. EN-TÊTE, PAGES DU LIVRET ET OBJECTIFS (Métadonnées : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
@@ -2205,13 +2205,14 @@ Construis une fiche NCM CONCISE, OPÉRATIONNELLE et PROFESSIONNELLE d'une fidél
    - subject_level : "[Matière] – Niveau {lvl or '...'}"
    - objectives : CONCIS et MESURABLE (16 à 26 mots max), sans répéter "Objectifs d'apprentissage" ni ajouter d'adverbes vagues ("avec précision", "correctement").
 
-4. PUCES OPÉRATIONNELLES À L'INFINITIF AVEC DÉTAILS CONCRETS EXACTS :
-   - Rédige 2 à 3 puces COURTES et DENSES par station (**14 à 24 mots max** par "text").
+4. PUCES OPÉRATIONNELLES À L'INFINITIF AVEC NUMÉROS D'ACTIVITÉS OBLIGATOIRES :
+   - Rédige **2 à 3 puces COURTES et ÉQUILIBRÉES** par station (jamais 1 seule puce afin de garder l'équilibre visuel des cartes ; **13 à 22 mots max** par "text").
    - Commence CHAQUE "text" par un verbe à l'INFINITIF (jamais d'impératif adressé aux élèves, jamais "L'enseignant présente..." ni "Les élèves observent...").
-   - INTERDICTION ABSOLUE des formules d'au revoir, du rappel de correction à la prochaine séance (même en fin de phrase) et des formules vagues ("des exercices", "des nombres proposés").
+   - CITATION OBLIGATOIRE DES NUMÉROS : mentionne TOUJOURS les numéros exacts de chaque activité/exercice figurant dans les diapositives (pratique guidée sur ardoises et livret, pratique autonome, correction des devoirs). Interdit d'écrire "les activités de la page 41" sans leurs numéros exacts.
+   - INTERDICTION ABSOLUE des formules d'au revoir ou du rappel de correction à la prochaine séance.
 
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num or 'numéro'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"[Matière] – Niveau {lvl or '...'}","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT]","duration":"25 min","bullets":[{{"label":"Sous-titre court","text":"Verbe à l'infinitif + contenu concret exact en 14 à 24 mots max."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num or 'numéro'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"[Matière] – Niveau {lvl or '...'}","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT]","duration":"25 min","bullets":[{{"label":"Sous-titre court","text":"Verbe à l'infinitif + numéros exacts et contenu concret en 13 à 22 mots max."}}]}}]}}"""
     else:
         station_rule = (
             f"التزم باستخراج ({stations}) محطات بالضبط من مراحل الحصة الواردة في الشرائح."
@@ -2222,12 +2223,12 @@ Retourne UNIQUEMENT un objet JSON valide :
 صمّم خطاطة بيداغوجية رسمية عالية الاحترافية، موجزة وإجرائية، بأمانة تامة لمضامين الشرائح لتستقر بأناقة داخل صفحة A4 واحدة:
 
 1. قاعدة الترويسة وترقيم العنوان وتوحيد صفحات الكراسة (صارمة جداً):
-   - في "lesson_subtitle" و"livret_pages"، اذكر **جميع صفحات أنشطة وواجب حصة اليوم فقط** بشكل متطابق بين الموضعين (مثال: `ص. 40–41`).
+   - في "lesson_subtitle" و"livret_pages"، اذكر **جميع صفحات أنشطة وواجب حصة اليوم فقط** بشكل متطابق بين الموضعين (مثال: `ص. 40-41`).
    - **يُمنع منعاً باتاً** إدراج أرقام صفحات **تصحيح الواجب المنزلي للحصة السابقة** أو صفحات **كراسة الحساب الذهني** داخل الترويسة أو الشارة المركزية (تُذكر فقط داخل محطة افتتاح الدرس).
    - **ترقيم عنوان الدرس:** افصل دائماً بين المحور العام والعنوان الفرعي بنقطتين رأسيتين `:` واحصر الكراسة بين قوسين متوازنين: `برنامج التعليم الصريح | الأعداد من 0 إلى 999: القيمة المكانية (الكراسة: ص. 40-41)`.
    - "subject_level" يجب أن يتضمن اسم المادة والمستوى معاً دائماً، مثال: `"الرياضيات – المستوى {lvl or '...'}"`.
    - استعمل دائماً الصيغة المؤسساتية الموحدة `الأستاذ(ة)` وليس `الأستاذ` وحدها.
-   - اكتب جميع الأرقام بالأرقام (`ص. 41`، `التمرين 5`، `15 د`)، والعمليات الحسابية بترتيبها الصحيح (`700 + 90 + 3`) دون رموز LaTeX (`$...$`).
+   - اكتب جميع الأرقام بالأرقام (`ص. 41`، `النشاط 4`، `15 د`)، والعمليات الحسابية بترتيبها الصحيح (`700 + 90 + 3`) دون رموز LaTeX (`$...$`).
 
 2. عناوين المحطات ومددها — مطابقة حرفية وتحقق حسابي صارم:
    - انسخ حقل "title" لكل محطة حرفياً 100% كما ورد في شريحة تنظيم الحصة دون استبداله بمسميات أخرى.
@@ -2237,20 +2238,19 @@ Retourne UNIQUEMENT un objet JSON valide :
 3. هدف التعلم — صياغة إجرائية رشيقة قابلة للقياس:
    - اكتب هدفاً موجزاً (12 إلى 20 كلمة) يبدأ بمصدر صريح، دون تكرار نفس الكلمة مرتين، ودون الأوصاف الإنشائية غير القابلة للقياس مثل «بدقة»، «بدقة تامة»، «بشكل صحيح»، «بإتقان».
 
-4. الأسلوب المصدري الإجرائي + السلامة اللغوية والتفاصيل الملموسة:
+4. إلزامية ذكر أرقام الأنشطة والتمارين + الأسلوب المصدري الإجرائي:
    - **منع مطلق لأفعال الأمر:** تبدأ كل فقرة بمصدر صريح مهني (`تصحيح...`، `كتابة...`، `متابعة...`، `تحديد...`، `إنجاز...`، `تكليف...`، `تقدير...`).
-   - تجنّب تكرار نفس العبارة مرتين داخل الجملة الواحدة (مثل كتابة «إنجاز عمليات كراسة الحساب الذهني (ص. 6)» بدل تكرار «الحساب الذهني» مرتين)، وتحقق من سلامة حروف الجر والربط (`لمقارنة النتائج`).
-   - اذكر الأعداد الحرفية وأرقام التمارين والمدد الجزئية (دقيقة، دقيقتان، 5 دقائق) كما وردت في الشرائح بدلاً من العبارات المبهمة.
+   - **إلزامية أرقام الأنشطة والتمارين (خاصة في الممارسة الموجهة وافتتاح الدرس والممارسة المستقلة):** افحص الشرائح جيداً واذكر **الأرقام الحرفية لكل نشاط وتمرين** ينجزه المتعلمون (سواء على الألواح مثل «النشاط 1»، «النشاطان 2 و3»، أو في العمل الثنائي على الكراسة مثل «إنجاز النشاط [رقمه الدقيق من الشريحة] ص. 41»، أو في تصحيح الواجب المنزلي مثل «التمرينين 1 و2 ص. 38 والتمرين 5 ص. 39»). **يُمنع منعاً باتاً** كتابة عبارات مبهمة مثل «إنجاز أنشطة الصفحة 41» أو «تمارين الواجب المنزلي» مع إخفاء أرقامها الواردة في الشرائح.
+   - اذكر الأمثلة العددية الحرفية والمدد الجزئية الدقيقة (دقيقة واحدة، دقيقتان، 5 دقائق) بدقة، وتجنب تكرار عبارة «الحساب الذهني» مرتين في نفس الجملة.
 
-5. تنظيم «اختتام الدرس» وحظر الحشو وعبارات الوداع:
-   - **يُمنع منعاً باتاً** ذكر أي إشارة لموعد التصحيح في الحصة المقبلة أو القادمة — لا في فقرة مستقلة ولا كجملة فرعية في آخر فقرة الواجب المنزلي — كما تُمنع النهايات الإنشائية الفارغة وعبارات التوديع.
-   - في محطة «اختتام الدرس»، افصل بين **«الواجب المنزلي»** و**«تقدير التحكم»** في نقطتين قصيرتين مستقلتين، أو إذا جُمعا في نقطة واحدة فاجعل عنوانها **`الواجب المنزلي وتقدير التحكم`**.
-   - اكتب فقرة إلى 3 فقرات مركزة حسب حجم المحطة (**13 إلى 22 كلمة لكل فقرة**).
+5. التوازن البصري للبطاقات وحظر الحشو وعبارات الوداع:
+   - اكتب **فقرتين إلى 3 فقرات موجزة ومتوازنة** في **كل** محطة (لا تكتفِ بفقرة واحدة فقط في أي محطة، مع جعل كل فقرة موجزة بين **12 و20 كلمة**)؛ ففي «اختتام الدرس» افصل بين فقرتين قصيرتين (`الواجب المنزلي` + `تقدير التحكم`)، وفي «الممارسة المستقلة» افصل بين (`الإنجاز الفردي` + `المواكبة والتصحيح`)، وفي «نمذجة» افصل بين (`عرض شريط النمذجة` + `استنتاج الخطوات`).
+   - **يُمنع منعاً باتاً** ذكر أي إشارة لموعد التصحيح في الحصة المقبلة أو القادمة — لا في فقرة مستقلة ولا كجملة فرعية في آخر فقرة الواجب المنزلي — كما تُمنع عبارات الوداع والنهايات الإنشائية الفارغة.
 
 أرجع JSON صالحاً فقط:
-{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة'}","header_title":"[المادة] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}","lesson_subtitle":"برنامج التعليم الصريح | [المحور: العنوان الفرعي] (الكراسة: ص. [صفحات حصة اليوم فقط])","objectives":"هدف إجرائي موجز بدون تكرار وبدون كلمة بدقة...","subject_level":"[المادة] – المستوى {lvl or '...'}","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. [نفس صفحات حصة اليوم]","stations":[{{"title":"[العنوان الحرفي]","duration":"15 د","bullets":[{{"label":"عنوان مهني موجز","text":"مصدر صريح + تفاصيل رقمية وحرفية من الشرائح في 13 إلى 22 كلمة..."}}]}}]}}"""
+{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة'}","header_title":"[المادة] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}","lesson_subtitle":"برنامج التعليم الصريح | [المحور: العنوان الفرعي] (الكراسة: ص. [صفحات حصة اليوم فقط])","objectives":"هدف إجرائي موجز بدون تكرار وبدون كلمة بدقة...","subject_level":"[المادة] – المستوى {lvl or '...'}","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. [نفس صفحات حصة اليوم]","stations":[{{"title":"[العنوان الحرفي]","duration":"15 د","bullets":[{{"label":"عنوان مهني موجز","text":"مصدر صريح + أرقام الأنشطة والتفاصيل الحرفية من الشرائح في 12 إلى 20 كلمة..."}}]}}]}}"""
 
-    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: Inspect every clock/timer icon visually and arithmetically verify that all station durations sum to the exact total session time — e.g., 15+5+20+15+5 = 60 min for Math, never confuse 5 min with 25 min on Modelage. Separate topic and sub-topic with a colon, keep balanced parentheses around today's livret pages only, keep Homework and Mastery Assessment cleanly labeled, and avoid word repetition or typos):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and produce a polished, concrete, executive NCM.")}]
+    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: Extract EVERY exact activity/exercise number from the slides — especially in Guided Practice / الممارسة الموجهة on both slates and livret, Independent Practice, and Homework Correction — NEVER replace specific activity numbers with vague text like 'أنشطة الصفحة 41'. Provide 2 to 3 balanced concise bullets per station for visual symmetry, arithmetically verify that station durations sum to the session total, and separate topic/sub-topic with a colon):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and produce a polished, concrete, executive NCM.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
