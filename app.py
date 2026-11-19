@@ -2020,17 +2020,13 @@ def fix_arabic_bidi(s):
     """إصلاح اتجاه العمليات الحسابية ومنع انقلاب الأقواس بجوار الأرقام عند التصدير لـ PDF"""
     if not s:
         return s
-    # إصلاح الأقواس المزدوجة الخاطئة إن وجدت
     s = re.sub(r'\(\s*ص\.?\s*\((\d+(?:\s*[-–]\s*\d+)?)\)\s*\)?', r'(ص. \1)', s)
-    # عزل العمليات الحسابية (مثل 700 + 90 + 3) باتجاه يسار-يمين
     s = re.sub(
         r'(?<!\u200E)\b(\d+(?:\s*(?:[+×÷=]|\s-\s)\s*\d+)+)\b(?!\u200E)',
         lambda m: '\u200E' + re.sub(r'\s*([+\-×÷=])\s*', r' \1 ', m.group(1)).strip() + '\u200E',
         s
     )
-    # حماية الأقواس المحيطة بالأرقام فقط مثل (80)
     s = re.sub(r'\((\d+)\)', '(\u200F' + r'\1' + '\u200F)', s)
-    # إضافة علامة الاتجاه العربي قبل قوس الإغلاق التالي لرقم لمنع انقلابه إلى (
     s = re.sub(r'(\d)\)', r'\1' + '\u200F)', s)
     s = re.sub(r'\u200E{2,}', '\u200E', s)
     s = re.sub(r'\u200F{2,}', '\u200F', s)
@@ -2051,6 +2047,14 @@ def clean_ar_text(s, is_objective=False):
         '',
         s
     )
+    # إزالة تكرار عبارة الحساب الذهني في نفس الجملة
+    s = re.sub(
+        r'عمليات\s+الحساب\s+الذهني\s*(?:\(?\s*(ص\.?\s*\d+)\s*\)?)?\s*(?:في|ب)\s*كراسة\s+الحساب\s+الذهني',
+        lambda m: f"عمليات كراسة الحساب الذهني ({m.group(1)})" if m.group(1) else "عمليات كراسة الحساب الذهني",
+        s
+    )
+    # تصحيح أخطاء الربط المطبعية الشائعة
+    s = re.sub(r'بين\s+الأقران\s+المقارنة', 'بين الأقران لمقارنة', s)
     # حذف الحشو الإنشائي الزائد
     s = re.sub(
         r'[،,]?\s*(?:مع\s+تقديم\s+الشروحات|لغايات\s+التتبع\s+البيداغوجي|حول\s+المفهوم\s+الجديد|بشكل\s+مستقل\s+وصحيح|بشكل\s+سليم|بدقة\s+تامة)\s*',
@@ -2096,6 +2100,9 @@ def polish_ncm_output(res_json, is_fr=False):
                 else:
                     lbl = clean_ar_text(lbl, is_objective=False).rstrip('.')
                     txt = clean_ar_text(txt, is_objective=False)
+                    # مطابقة عنوان فقرة اختتام الدرس لمضمونها إذا جمعت الواجب وتقدير التحكم
+                    if re.fullmatch(r'(?:ال)?واجب\s*(?:المنزلي|منزلي)(?:\s+الجديد)?', lbl) and re.search(r'(?:تقدير|تحقق|تحكم|نسبة)', txt):
+                        lbl = 'الواجب المنزلي وتقدير التحكم'
                     if txt and txt[-1] not in '.!؟':
                         txt += '.'
                 b['label'] = lbl
@@ -2109,15 +2116,22 @@ def polish_ncm_output(res_json, is_fr=False):
     if obj:
         res_json['objectives'] = obj.replace('>=', '≥').replace('<=', '≤') if is_fr else clean_ar_text(obj, is_objective=True)
 
-    # ضبط أقواس الكراسة/Livret في الترويسة الفرعية
+    # ضبط أقواس الكراسة/Livret وترقيم العنوان في الترويسة الفرعية
     sub = str(res_json.get('lesson_subtitle') or '').strip()
     if sub:
-        sub = re.sub(r'\s*\(?\s*(الكراسة\s*[:：]\s*ص\.?\s*[^()]+?)\s*\)?$', r' (\1)', sub)
-        sub = re.sub(r'\s*\(?\s*(Livret\s*:\s*p\.?\s*[^()]+?)\s*\)?$', r' (\1)', sub, flags=re.IGNORECASE)
-        sub = re.sub(r'\s{2,}', ' ', sub).strip()
-        if sub.count(')') > sub.count('('):
-            sub = sub.rstrip(')').strip()
-        res_json['lesson_subtitle'] = sub if is_fr else fix_arabic_bidi(sub)
+        if is_fr:
+            sub = re.sub(r'\s*[\(\[]?\s*(Livret\s*:\s*p\.?\s*[^()\[\]]+?)\s*[\)\]]?\s*$', r' (\1)', sub, flags=re.IGNORECASE)
+            sub = re.sub(r'\s{2,}', ' ', sub).strip()
+            res_json['lesson_subtitle'] = sub
+        else:
+            sub = re.sub(
+                r'\s*[\(\[]?\s*(الكراسة\s*[:：]\s*ص\.?\s*[^()\[\]]+?)\s*[\)\]]?\s*$',
+                lambda m: ' (\u200F' + m.group(1).strip() + '\u200F)',
+                sub
+            )
+            sub = re.sub(r'(من\s+\d+\s+إلى\s+\d+)\s+(?!:|[:：\(])(?=[\u0600-\u06FF])', r'\1: ', sub)
+            sub = re.sub(r'\s{2,}', ' ', sub).strip()
+            res_json['lesson_subtitle'] = fix_arabic_bidi(sub)
 
     # ضمان ظهور اسم المادة مع المستوى داخل الشارة المركزية
     hdr = str(res_json.get('header_title') or '').strip()
@@ -2129,7 +2143,6 @@ def polish_ncm_output(res_json, is_fr=False):
             if subj_name and subj_name not in subj_lvl:
                 res_json['subject_level'] = f"{subj_name} – {subj_lvl}"
 
-    # تنظيف شارة الحصة وصفحات الكراسة
     if res_json.get('seance_ncm_badge') and not is_fr:
         res_json['seance_ncm_badge'] = fix_arabic_bidi(str(res_json['seance_ncm_badge']).strip())
     lp = str(res_json.get('livret_pages') or '').strip()
@@ -2180,22 +2193,22 @@ Construis une fiche NCM CONCISE, OPÉRATIONNELLE et PROFESSIONNELLE d'une fidél
    - 100% en FRANÇAIS ("lang": "fr"). Écris « et » (jamais « & »), « NCM » (jamais « Fiche »), et « ≥ » (jamais « >= »).
    - Écris TOUJOURS les numéros de pages, exercices et durées en CHIFFRES (ex: "p. 23", "p. 40-41", "Act. 1", "30 s", "5 min").
 
-2. TITRES ET DURÉES DES STATIONS — COPIE LITTÉRALE STRICTE :
+2. TITRES ET DURÉES DES STATIONS — COPIE LITTÉRALE ET CONTRÔLE ARITHMÉTIQUE :
    - Copie MOT POUR MOT le titre exact de chaque étape depuis la diapositive de plan / intercalaires (interdit d'inventer des titres génériques).
-   - Lis avec une précision maximale le chiffre inscrit dans CHAQUE icône d'horloge/chronomètre sur la diapositive de plan (image jointe) ou dans le texte des diapositives et copie-le exactement.
+   - Lis avec une précision maximale le chiffre inscrit dans CHAQUE icône d'horloge (distingue bien 5, 10, 15, 20, 25) et VÉRIFIE que la somme des durées correspond exactement à la durée totale de la séance (généralement 55 min en français ou 60 min en mathématiques).
    - {station_rule}
 
 3. EN-TÊTE, PAGES DU LIVRET ET OBJECTIFS (Métadonnées : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
-   - RÈGLE STRICTE DES PAGES : dans "lesson_subtitle" et "livret_pages", indique UNIQUEMENT et DE MANIÈRE COHÉRENTE toutes les pages du livret propres à la SÉANCE DU JOUR (exercices et devoir du jour). N'inclus JAMAIS les pages de correction des devoirs de la séance précédente ni celles du livret de calcul mental.
+   - RÈGLE STRICTE DES PAGES : dans "lesson_subtitle" et "livret_pages", indique UNIQUEMENT et DE MANIÈRE COHÉRENTE toutes les pages du livret propres à la SÉANCE DU JOUR. N'inclus JAMAIS les pages de correction des devoirs de la séance précédente ni celles du livret de calcul mental.
    - PONCTUATION DU TITRE : sépare toujours le thème et le sous-thème par deux-points « : » et encadre les pages entre parenthèses équilibrées : "Enseignement explicite | [Thème : Sous-thème] (Livret : p. [pages du jour uniquement])".
    - header_title : "[Matière ex: Français ou Mathématiques] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
    - subject_level : "[Matière] – Niveau {lvl or '...'}"
    - objectives : CONCIS et MESURABLE (16 à 26 mots max), sans répéter "Objectifs d'apprentissage" ni ajouter d'adverbes vagues ("avec précision", "correctement").
 
 4. PUCES OPÉRATIONNELLES À L'INFINITIF AVEC DÉTAILS CONCRETS EXACTS :
-   - Rédige 2 à 3 puces COURTES et DENSES par station (**14 à 24 mots max** par "text"). Pour une étape courte (clôture, modelage bref), 2 puces substantielles suffisent.
+   - Rédige 2 à 3 puces COURTES et DENSES par station (**14 à 24 mots max** par "text").
    - Commence CHAQUE "text" par un verbe à l'INFINITIF (jamais d'impératif adressé aux élèves, jamais "L'enseignant présente..." ni "Les élèves observent...").
-   - INTERDICTION ABSOLUE des formules d'au revoir, du rappel de correction à la prochaine séance (même en fin de phrase) et des formules vagues ("des exercices", "des nombres proposés") : cite les numéros exacts d'activités/exercices, exemples concrets clés, micro-durées (30 s, 1 min, 5 min), noms de vidéos et mots cibles sans doublon.
+   - INTERDICTION ABSOLUE des formules d'au revoir, du rappel de correction à la prochaine séance (même en fin de phrase) et des formules vagues ("des exercices", "des nombres proposés").
 
 Retourne UNIQUEMENT un objet JSON valide :
 {{"lang":"fr","ncm_number":"{ncm_num or 'numéro'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"[Matière] – Niveau {lvl or '...'}","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT]","duration":"25 min","bullets":[{{"label":"Sous-titre court","text":"Verbe à l'infinitif + contenu concret exact en 14 à 24 mots max."}}]}}]}}"""
@@ -2209,35 +2222,35 @@ Retourne UNIQUEMENT un objet JSON valide :
 صمّم خطاطة بيداغوجية رسمية عالية الاحترافية، موجزة وإجرائية، بأمانة تامة لمضامين الشرائح لتستقر بأناقة داخل صفحة A4 واحدة:
 
 1. قاعدة الترويسة وترقيم العنوان وتوحيد صفحات الكراسة (صارمة جداً):
-   - في "lesson_subtitle" و"livret_pages"، اذكر **جميع صفحات أنشطة وواجب حصة اليوم فقط** بشكل متطابق بين الموضعين (مثلاً إن شملت أنشطة الحصة وواجبها الصفحتين 40 و41 فاكتب `ص. 40–41` في كليهما).
+   - في "lesson_subtitle" و"livret_pages"، اذكر **جميع صفحات أنشطة وواجب حصة اليوم فقط** بشكل متطابق بين الموضعين (مثال: `ص. 40–41`).
    - **يُمنع منعاً باتاً** إدراج أرقام صفحات **تصحيح الواجب المنزلي للحصة السابقة** أو صفحات **كراسة الحساب الذهني** داخل الترويسة أو الشارة المركزية (تُذكر فقط داخل محطة افتتاح الدرس).
-   - **ترقيم عنوان الدرس:** افصل دائماً بين المحور العام والعنوان الفرعي بنقطتين رأسيتين `:` (مثال: `برنامج التعليم الصريح | الأعداد من 0 إلى 999: القيمة المكانية (الكراسة: ص. 40–41)`).
+   - **ترقيم عنوان الدرس:** افصل دائماً بين المحور العام والعنوان الفرعي بنقطتين رأسيتين `:` واحصر الكراسة بين قوسين متوازنين: `برنامج التعليم الصريح | الأعداد من 0 إلى 999: القيمة المكانية (الكراسة: ص. 40-41)`.
    - "subject_level" يجب أن يتضمن اسم المادة والمستوى معاً دائماً، مثال: `"الرياضيات – المستوى {lvl or '...'}"`.
    - استعمل دائماً الصيغة المؤسساتية الموحدة `الأستاذ(ة)` وليس `الأستاذ` وحدها.
    - اكتب جميع الأرقام بالأرقام (`ص. 41`، `التمرين 5`، `15 د`)، والعمليات الحسابية بترتيبها الصحيح (`700 + 90 + 3`) دون رموز LaTeX (`$...$`).
 
-2. عناوين المحطات ومددها — مطابقة حرفية مطلقة:
+2. عناوين المحطات ومددها — مطابقة حرفية وتحقق حسابي صارم:
    - انسخ حقل "title" لكل محطة حرفياً 100% كما ورد في شريحة تنظيم الحصة دون استبداله بمسميات أخرى.
-   - اقرأ الرقم الدقيق داخل كل أيقونة ساعة في صورة شريحة التنظيم أو نص الشرائح وانسخه حرفياً (مثال: `15 د`، `5 د`، `20 د`، `15 د`، `5 د`) دون تخمين.
+   - اقرأ الرقم الدقيق داخل كل أيقونة ساعة بعناية فائقة (ميّز بدقة بين `5 د` و`15 د` و`25 د`، فمحطة «نمذجة» قصيرة عادةً `5 د` أو `10 د` وليست `25 د`)، وتحقّق حسابياً قبل إخراج النتيجة من أن **مجموع مدد المحطات يطابق المدة الإجمالية للحصة** (غالباً 60 دقيقة في الرياضيات: مثل 15 + 5 + 20 + 15 + 5 = 60 د).
    - {station_rule}
 
 3. هدف التعلم — صياغة إجرائية رشيقة قابلة للقياس:
-   - اكتب هدفاً موجزاً (12 إلى 20 كلمة) يبدأ بمصدر صريح، **دون تكرار نفس الكلمة مرتين** (مثل تكرار «تحديد» أو «العدد»)، و**يُمنع تماماً** استخدام الأوصاف الإنشائية غير القابلة للقياس مثل «بدقة»، «بدقة تامة»، «بشكل صحيح»، «بإتقان».
-   - مثال مرجعي راقٍ: `تحديد القيمة المكانية لأرقام عدد من 0 إلى 999 عبر تعرف منزلة كل رقم وكتابة قيمته العددية.`
+   - اكتب هدفاً موجزاً (12 إلى 20 كلمة) يبدأ بمصدر صريح، دون تكرار نفس الكلمة مرتين، ودون الأوصاف الإنشائية غير القابلة للقياس مثل «بدقة»، «بدقة تامة»، «بشكل صحيح»، «بإتقان».
 
-4. الأسلوب المصدري الإجرائي + التفاصيل الحرفية الملموسة:
-   - **منع مطلق لأفعال الأمر:** تبدأ كل فقرة بمصدر صريح مهني (`تصحيح...`، `كتابة...`، `متابعة...`، `استنتاج...`، `تحديد...`، `إنجاز...`، `تتبع...`، `تقدير...`).
-   - **منع التعميم المبهم:** لا تكتب عبارات عامة مثل «أعداد مقترحة» أو «أنشطة الكراسة» أو «تفكيكات معروضة» إذا كانت الشرائح تذكر الأعداد أو أرقام الأنشطة المحددة؛ اذكر الأعداد الحرفية وأرقام التمارين والمدد الجزئية (دقيقة، دقيقتان، 5 دقائق) كما وردت في الشرائح.
+4. الأسلوب المصدري الإجرائي + السلامة اللغوية والتفاصيل الملموسة:
+   - **منع مطلق لأفعال الأمر:** تبدأ كل فقرة بمصدر صريح مهني (`تصحيح...`، `كتابة...`، `متابعة...`، `تحديد...`، `إنجاز...`، `تكليف...`، `تقدير...`).
+   - تجنّب تكرار نفس العبارة مرتين داخل الجملة الواحدة (مثل كتابة «إنجاز عمليات كراسة الحساب الذهني (ص. 6)» بدل تكرار «الحساب الذهني» مرتين)، وتحقق من سلامة حروف الجر والربط (`لمقارنة النتائج`).
+   - اذكر الأعداد الحرفية وأرقام التمارين والمدد الجزئية (دقيقة، دقيقتان، 5 دقائق) كما وردت في الشرائح بدلاً من العبارات المبهمة.
 
-5. حظر مطلق للحشو وعبارات الوداع أو التصحيح المقبل:
-   - **يُمنع منعاً باتاً** ذكر أي إشارة لموعد التصحيح في الحصة المقبلة أو القادمة — لا في فقرة مستقلة ولا حتى كجملة فرعية في آخر فقرة الواجب المنزلي (يُكتفى في الواجب المنزلي بتحديد الأنشطة والصفحات المطلوبة فقط).
-   - **يُمنع منعاً باتاً** إضافة نهايات إنشائية فارغة مثل «مع تقديم الشروحات»، «بشكل مستقل وصحيح»، «لغايات التتبع البيداغوجي»، «حول المفهوم الجديد»، «توجيهات الاستماع»، أو «إلى اللقاء».
-   - اكتب **فقرتين إلى 3 فقرات** مركزة في كل محطة (**13 إلى 22 كلمة لكل فقرة**).
+5. تنظيم «اختتام الدرس» وحظر الحشو وعبارات الوداع:
+   - **يُمنع منعاً باتاً** ذكر أي إشارة لموعد التصحيح في الحصة المقبلة أو القادمة — لا في فقرة مستقلة ولا كجملة فرعية في آخر فقرة الواجب المنزلي — كما تُمنع النهايات الإنشائية الفارغة وعبارات التوديع.
+   - في محطة «اختتام الدرس»، افصل بين **«الواجب المنزلي»** و**«تقدير التحكم»** في نقطتين قصيرتين مستقلتين، أو إذا جُمعا في نقطة واحدة فاجعل عنوانها **`الواجب المنزلي وتقدير التحكم`**.
+   - اكتب فقرة إلى 3 فقرات مركزة حسب حجم المحطة (**13 إلى 22 كلمة لكل فقرة**).
 
 أرجع JSON صالحاً فقط:
 {{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة'}","header_title":"[المادة] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}","lesson_subtitle":"برنامج التعليم الصريح | [المحور: العنوان الفرعي] (الكراسة: ص. [صفحات حصة اليوم فقط])","objectives":"هدف إجرائي موجز بدون تكرار وبدون كلمة بدقة...","subject_level":"[المادة] – المستوى {lvl or '...'}","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. [نفس صفحات حصة اليوم]","stations":[{{"title":"[العنوان الحرفي]","duration":"15 د","bullets":[{{"label":"عنوان مهني موجز","text":"مصدر صريح + تفاصيل رقمية وحرفية من الشرائح في 13 إلى 22 كلمة..."}}]}}]}}"""
 
-    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: Inspect every clock/timer icon visually in the attached plan slide image for exact durations. Never mention next-session correction reminders even as a sub-clause. Never use unmeasurable words like 'بدقة' in objectives. Use 'الأستاذ(ة)' consistently, cite concrete numbers/activity IDs from the slides instead of vague phrases, and keep today's livret pages consistent across header and badge while excluding previous-lesson correction pages):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and produce a polished, concrete, executive NCM.")}]
+    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: Inspect every clock/timer icon visually and arithmetically verify that all station durations sum to the exact total session time — e.g., 15+5+20+15+5 = 60 min for Math, never confuse 5 min with 25 min on Modelage. Separate topic and sub-topic with a colon, keep balanced parentheses around today's livret pages only, keep Homework and Mastery Assessment cleanly labeled, and avoid word repetition or typos):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and produce a polished, concrete, executive NCM.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
