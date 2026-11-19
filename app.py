@@ -1843,32 +1843,28 @@ HTML_TEMPLATE = r"""
                     const angle = isLowerCard ? (Math.PI / 7) : (isUpperCard ? (-Math.PI / 9) : 0);
 
                     if (isRightCol) {
-                        startX = hx + Math.cos(angle) * (radius + 3);
-                        startY = hy + Math.sin(angle) * (radius + 3);
-                        targetX = cardRect.left - cRect.left - 3;
-                        const gapLeft = centerColRect.right - cRect.left;
-                        const corridorX = isLowerCard ? (gapLeft + (targetX - gapLeft) * 0.42) : (gapLeft + (targetX - gapLeft) * 0.68);
-                        const r = 12;
-                        if (Math.abs(targetY - startY) < 28) {
-                            dPath = `M ${startX} ${startY} C ${corridorX} ${startY}, ${corridorX} ${targetY}, ${targetX} ${targetY}`;
-                        } else {
-                            const dirY = targetY > startY ? 1 : -1;
-                            dPath = `M ${startX} ${startY} L ${corridorX - r} ${startY} Q ${corridorX} ${startY} ${corridorX} ${startY + dirY * r} L ${corridorX} ${targetY - dirY * r} Q ${corridorX} ${targetY} ${corridorX + r} ${targetY} L ${targetX} ${targetY}`;
-                        }
-                    } else {
-                        startX = hx - Math.cos(angle) * (radius + 3);
-                        startY = hy + Math.sin(angle) * (radius + 3);
-                        targetX = cardRect.right - cRect.left + 3;
-                        const gapRight = centerColRect.left - cRect.left;
-                        const corridorX = isLowerCard ? (gapRight - (gapRight - targetX) * 0.42) : (gapRight - (gapRight - targetX) * 0.68);
-                        const r = 12;
-                        if (Math.abs(targetY - startY) < 28) {
-                            dPath = `M ${startX} ${startY} C ${corridorX} ${startY}, ${corridorX} ${targetY}, ${targetX} ${targetY}`;
-                        } else {
-                            const dirY = targetY > startY ? 1 : -1;
-                            dPath = `M ${startX} ${startY} L ${corridorX + r} ${startY} Q ${corridorX} ${startY} ${corridorX} ${startY + dirY * r} L ${corridorX} ${targetY - dirY * r} Q ${corridorX} ${targetY} ${corridorX - r} ${targetY} L ${targetX} ${targetY}`;
-                        }
-                    }
+                    targetX = cardRect.left - cRect.left - 3;
+                    const dy = targetY - hy;
+                    const dx = Math.max(Math.abs(targetX - hx) * 0.82, radius + 24);
+                    const natAngle = Math.max(-1.04, Math.min(1.04, Math.atan2(dy, dx)));
+                    startX = hx + Math.cos(natAngle) * (radius + 3);
+                    startY = hy + Math.sin(natAngle) * (radius + 3);
+                    const spanX = Math.max(12, targetX - startX);
+                    const cp1X = startX + spanX * 0.45;
+                    const cp2X = targetX - spanX * 0.45;
+                    dPath = `M ${startX} ${startY} C ${cp1X} ${startY}, ${cp2X} ${targetY}, ${targetX} ${targetY}`;
+                } else {
+                    targetX = cardRect.right - cRect.left + 3;
+                    const dy = targetY - hy;
+                    const dx = Math.max(Math.abs(hx - targetX) * 0.82, radius + 24);
+                    const natAngle = Math.max(-1.04, Math.min(1.04, Math.atan2(dy, dx)));
+                    startX = hx - Math.cos(natAngle) * (radius + 3);
+                    startY = hy + Math.sin(natAngle) * (radius + 3);
+                    const spanX = Math.max(12, startX - targetX);
+                    const cp1X = startX - spanX * 0.45;
+                    const cp2X = targetX + spanX * 0.45;
+                    dPath = `M ${startX} ${startY} C ${cp1X} ${startY}, ${cp2X} ${targetY}, ${targetX} ${targetY}`;
+                }
                 }
 
                 const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
