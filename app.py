@@ -42,12 +42,12 @@ def health_check():
                     f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent",
                     json={"contents": [{"parts": [{"text": "OK"}]}], "generationConfig": {"maxOutputTokens": 5}},
                     headers={"Content-Type": "application/json", "x-goog-api-key": keys_list[0]},
-                    timeout=6
+                    timeout=8
                 )
                 entry = {"model": m, "status": r.status_code}
                 if r.status_code != 200:
                     try:
-                        entry["msg"] = r.json().get("error", {}).get("message", "")[:100]
+                        entry["msg"] = r.json().get("error", {}).get("message", "")[:90]
                     except Exception:
                         pass
                 else:
@@ -58,10 +58,10 @@ def health_check():
                 if working_model:
                     break
             except Exception as e:
-                models_check.append({"model": m, "status": str(e)[:40]})
+                models_check.append({"model": m, "status": "timeout" if "timed out" in str(e).lower() else str(e)[:40]})
 
         info["models_check"] = models_check
-        test_model = working_model or (live_models[0] if live_models else "gemini-flash-latest")
+        test_model = working_model or (live_models[0] if live_models else "gemini-flash-lite-latest")
         info["test_model"] = test_model
 
         key_statuses = []
@@ -74,7 +74,7 @@ def health_check():
                     f"https://generativelanguage.googleapis.com/v1beta/models/{test_model}:generateContent",
                     json={"contents": [{"parts": [{"text": "OK"}]}], "generationConfig": {"maxOutputTokens": 5}},
                     headers={"Content-Type": "application/json", "x-goog-api-key": k},
-                    timeout=6
+                    timeout=8
                 )
                 k_entry = {"key": idx, "status": r.status_code}
                 if r.status_code != 200:
@@ -84,7 +84,7 @@ def health_check():
                         pass
                 key_statuses.append(k_entry)
             except Exception as e:
-                key_statuses.append({"key": idx, "status": str(e)[:40]})
+                key_statuses.append({"key": idx, "status": "timeout" if "timed out" in str(e).lower() else str(e)[:40]})
         info["keys_check"] = key_statuses
     return jsonify(info), 200
 
@@ -268,7 +268,7 @@ def extract_json_object(raw_text):
     return None
 
 def discover_live_models(keys):
-    """جلب النماذج النشطة فعلياً من Google API وتقديم الأحدث والأكثر استقراراً أولاً"""
+    """جلب النماذج النشطة وبناء سلسلة متوازنة تجمع بين Flash و Flash-Lite لتفادي ازدحام 503"""
     bad_tokens = (
         "tts", "image", "audio", "embedding", "aqa", "imagen", "veo",
         "robotics", "computer-use", "deep-research", "live", "gemma", "learnlm", "vision"
@@ -300,25 +300,35 @@ def discover_live_models(keys):
             continue
 
     if not found:
-        return ["gemini-flash-latest", "gemini-3-flash-preview", "gemini-flash-lite-latest", "gemini-2.5-flash"]
+        return ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3-flash-preview"]
 
-    def model_rank(m):
-        low = m.lower()
-        if low == "gemini-flash-latest": return (0, low)
-        if low == "gemini-3-flash": return (1, low)
-        if low == "gemini-3-flash-preview": return (2, low)
-        if "3" in low and "flash" in low and "lite" not in low: return (3, low)
-        if low == "gemini-flash-lite-latest": return (4, low)
-        if "3" in low and "flash" in low: return (5, low)
-        if low == "gemini-2.5-flash": return (6, low)
-        if low == "gemini-2.5-flash-lite": return (7, low)
-        if "flash" in low and "exp" not in low: return (8, low)
-        if "flash" in low: return (9, low)
-        if "pro" in low: return (10, low)
-        return (11, low)
+    # ترتيب ذكي يمزج بين Flash و Flash-Lite لتفادي التوقف عند ازدحام خادم واحد
+    priority_order = [
+        "gemini-flash-lite-latest",
+        "gemini-3.1-flash-lite",
+        "gemini-flash-latest",
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
+    ]
+    ordered = [m for m in priority_order if m in found]
+    for m in found:
+        if "lite" in m.lower() and m not in ordered:
+            ordered.append(m)
+    for m in found:
+        if "flash" in m.lower() and m not in ordered:
+            ordered.append(m)
+    return ordered[:6]
 
-    found.sort(key=model_rank)
-    return found[:8]
+def apply_fast_thinking_cfg(model_name, cfg):
+    low = model_name.lower()
+    if "lite" in low:
+        return cfg
+    if "3" in low:
+        cfg["thinkingConfig"] = {"thinkingLevel": "minimal"}
+    elif "2.5" in low or "flash-latest" in low:
+        cfg["thinkingConfig"] = {"thinkingBudget": 0}
+    return cfg
 
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
     keys = [k.strip() for k in re.split(r'[\s,;]+', str(api_key or '')) if k.strip()]
@@ -342,8 +352,6 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
     for model_name in candidate_models:
         if time.time() - start_ts > 48:
             break
-        if "pro" in model_name.lower() and (time.time() - start_ts) > 25:
-            continue
 
         zero_limit_hits = 0
         model_last_err = ""
@@ -353,12 +361,10 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
             elapsed = time.time() - start_ts
             if elapsed > 50:
                 break
-            req_timeout = max(12, min(30, int(55 - elapsed)))
+            req_timeout = max(10, min(16, int(54 - elapsed)))
             headers = {'Content-Type': 'application/json', 'x-goog-api-key': current_key}
 
-            req_gen_config = dict(base_gen_config)
-            if "2.5-flash" in model_name.lower():
-                req_gen_config["thinkingConfig"] = {"thinkingBudget": 0}
+            req_gen_config = apply_fast_thinking_cfg(model_name, dict(base_gen_config))
             payload = {"contents": [{"parts": parts}], "generationConfig": req_gen_config}
 
             try:
@@ -374,15 +380,6 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                     res = requests.post(
                         f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
                         json=payload,
-                        headers=headers,
-                        timeout=req_timeout
-                    )
-                # في حال أعاد v1beta خطأ 404، نحاول الاستدعاء عبر v1 مرة واحدة
-                if res.status_code == 404:
-                    v1_cfg = {"temperature": temperature, "maxOutputTokens": 8192}
-                    res = requests.post(
-                        f"https://generativelanguage.googleapis.com/v1/models/{model_name}:generateContent",
-                        json={"contents": [{"parts": parts}], "generationConfig": v1_cfg},
                         headers=headers,
                         timeout=req_timeout
                     )
@@ -405,8 +402,12 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                     continue
                 elif res.status_code in (401, 403):
                     dead_keys.add(current_key)
-                    model_last_err = "مفتاح غير صالح أو محظور (403)"
+                    model_last_err = "مفتاح غير صالح (403)"
                     continue
+                elif res.status_code == 503:
+                    # 503 يعني ازدحام مؤقت على هذا النموذج من خوادم Google؛ ننتقل فوراً للنموذج التالي
+                    model_last_err = "ضغط مؤقت على خادم Google (503)"
+                    break
                 elif res.status_code == 429:
                     msg = ""
                     try:
@@ -422,12 +423,7 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                         model_last_err = "استنفاد الحصة المؤقتة (429)"
                     continue
                 elif res.status_code == 404:
-                    msg = ""
-                    try:
-                        msg = res.json().get('error', {}).get('message', '')[:70]
-                    except Exception:
-                        pass
-                    model_last_err = f"404 ({msg})" if msg else "غير متاح (404)"
+                    model_last_err = "غير متاح (404)"
                     break
                 else:
                     try:
@@ -445,8 +441,8 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
             model_errors.append(f"{model_name}: {model_last_err}")
 
     if model_errors:
-        return None, " | ".join(model_errors[:3])
-    return None, "تعذر الاتصال بالخادم، يرجى المحاولة بعد ثوانٍ."
+        return None, " | ".join(model_errors[:4])
+    return None, "تشهد خوادم Google ضغطاً مؤقتاً، يرجى المحاولة بعد دقيقة."
 
 HTML_TEMPLATE = r"""
 <!DOCTYPE html>
