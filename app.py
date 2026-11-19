@@ -1294,7 +1294,7 @@ HTML_TEMPLATE = r"""
             }
 
             const textRuns = [];
-            const planKeywords = ['مراحل الدرس', 'مراحل الحصة', 'تنظيم الحصة', 'تنظيم حصص', 'محطات الحصة', 'البرنامج', 'plan de la séance', 'étapes de la séance', 'déroulement', 'organisation'];
+            const planKeywords = ['مراحل الدرس', 'مراحل الحصة', 'تنظيم الحصة', 'تنظيم حصص', 'محطات الحصة', 'البرنامج', 'plan de la séance', 'plan de séance', 'étapes de la séance', 'les étapes', 'au programme', 'sommaire', 'déroulement', 'organisation'];
             let bestPlanSlide = null;
             let bestPlanScore = -1;
 
@@ -1833,70 +1833,79 @@ def generate_ncm():
         station_rule = (
             f"Retourne EXACTEMENT {stations} stations correspondant aux étapes du support."
             if stations > 0 else
-            "Extrais EXACTEMENT le nombre réel de stations/étapes figurant sur la diapositive de plan/organisation de la séance (jusqu'à 6 stations maximum), sans fusionner ni inventer d'étapes."
+            "Extrais EXACTEMENT le nombre réel de stations figurant sur la diapositive de plan/organisation et les diapositives titres (jusqu'à 6 maximum), sans fusionner ni inventer d'étapes."
         )
         system_prompt = f"""Tu es un inspecteur pédagogique expert de l'Enseignement Explicite (École Pionnière au Maroc).
-Analyse minutieusement le contenu des diapositives ci-jointes et construis la carte pédagogique (NCM) avec une FIDÉLITÉ LITTÉRALE ABSOLUE aux diapositives :
+Analyse minutieusement TOUTES les diapositives et construis une fiche NCM opérationnelle d'une FIDÉLITÉ LITTÉRALE ABSOLUE au support :
 
-1. RÈGLE DE LANGUE ET STYLE :
+1. LANGUE ET CONVENTIONS STRICTES :
    - Réponds 100% en FRANÇAIS ("lang": "fr"). Zéro mot en arabe.
-   - Dans le texte rédigé, écris toujours « et » au lieu du symbole « & ».
-   - Utilise toujours « NCM » (jamais « Fiche »).
+   - Écris toujours « et » au lieu de « & ». Utilise toujours « NCM » (jamais « Fiche »).
+   - Écris TOUJOURS les numéros de pages, d'activités et de durées en CHIFFRES (ex: "p. 23", "page 23", "Act. 1", "30 s", "1, 2 ou 3"), JAMAIS en toutes lettres ("vingt-trois" est interdit).
 
-2. RÈGLE STRICTE — TITRES EXACTS DES STATIONS (COPIE LITTÉRALE) :
-   - Repère d'abord la diapositive du plan/organisation de la séance et les diapositives de titre de chaque étape.
-   - Pour chaque station, le champ "title" DOIT reproduire MOT POUR MOT le titre exact écrit sur la diapositive.
-   - INTERDICTION ABSOLUE de reformuler, renommer ou remplacer le titre d'une diapositive par un titre générique qui ne figure pas dans le support.
+2. TITRES DES STATIONS — COPIE LITTÉRALE STRICTE :
+   - Repère la diapositive de plan/étapes et les diapositives intercalaires qui annoncent chaque étape.
+   - Copie MOT POUR MOT le titre exact écrit dans les diapositives (ex: "Présentation du vocabulaire", "Exploitation du vocabulaire (Description)", "Activités de vocabulaire sur livret").
+   - INTERDICTION ABSOLUE d'inventer ou substituer des titres pédagogiques génériques qui ne figurent pas tels quels sur les diapositives (interdit d'écrire "Modelage et Pratique Guidée...", "Exploitation Orale...", "Pratique Autonome..." si ces mots ne sont pas le titre exact de la diapositive).
 
-3. RÈGLE STRICTE — DURÉES EXACTES DES STATIONS (COPIE LITTÉRALE) :
-   - Pour chaque station, extrais la durée EXACTE écrite sur la diapositive (ex: "5 min", "10 min", "15 min", "20 min", "30 min", "40 min").
-   - INTERDICTION de modifier, arrondir ou redistribuer une durée explicitement mentionnée dans les diapositives. N'estime une durée que si elle est totalement absente du document.
+3. DURÉES DES STATIONS — COPIE LITTÉRALE STRICTE :
+   - Copie la durée EXACTE indiquée sur les diapositives ou sur les icônes d'horloge de l'image jointe (ex: "25 min", "20 min", "10 min"). Ne modifie ni ne redistribue aucune durée explicite.
    - {station_rule}
 
-4. MÉTADONNÉES DE L'EN-TÊTE (valeurs fournies si présentes : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
-   - header_title : "[Matière uniquement ex: Français ou Mathématiques, SANS sous-composantes entre parenthèses] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
-   - lesson_subtitle : "Enseignement explicite | [Titre exact de la leçon] (Livret : p. [pages exactes mentionnées])"
-   - objectives : Les objectifs d'apprentissage exacts issus des diapositives.
+4. EN-TÊTE ET OBJECTIFS EXHAUSTIFS (Métadonnées : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
+   - header_title : "[Matière uniquement ex: Français ou Mathématiques, SANS parenthèses] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}"
+   - lesson_subtitle : "Enseignement explicite | [Intitulé exact de l'unité et du thème/leçon issu des diapositives] (Livret : p. [numéro en chiffres])"
+   - objectives : Commence par "Objectifs de la séance (seuil de maîtrise >= 80%) : " (ou le seuil mentionné dans les diapositives), puis énonce l'objectif exact EN LISTANT ENTRE PARENTHÈSES TOUS les mots, sons, notions ou structures cibles de la séance (interdit de résumer par "des objets du quotidien").
 
-5. CONTENU PÉDAGOGIQUE DE CHAQUE STATION :
-   - Rédige 3 puces précises et fidèles aux diapositives de cette station uniquement (chaque puce comporte un champ "label" contenant un court sous-titre français de 2 à 3 mots comme « Modélisation » ou « Pratique guidée », et un champ "text" de 14 à 22 mots ; ne jamais écrire le mot littéral "text" ou "label" comme valeur !) incluant les tâches exactes (Niveau 1 et Niveau 2 si classe multigrade), les exemples concrets (mots, phrases, calculs) et les numéros de pages du livret.
+5. CONTENU OPÉRATIONNEL ET EXHAUSTIF DES PUCES (Style fiche pratique de classe) :
+   - Pour chaque station, rédige 3 puces denses et fidèles aux diapositives de CETTE station (18 à 36 mots par puce).
+   - STYLE OBLIGATOIRE À L'INFINITIF : chaque champ "text" DOIT commencer par un verbe d'action à l'infinitif (ex: "Distinguer...", "Écrire le numéro (1, 2 ou 3)...", "Observer la scène pendant 30 s...", "Répondre aux questions...", "Passer individuellement au tableau...", "Ouvrir le livret à la page 23...", "Circuler entre les rangs...", "Réviser à la maison...").
+   - INTERDICTION ABSOLUE du style narratif vague ("L'enseignant présente...", "Les élèves observent...", "Le professeur vérifie...", "Les apprenants passent...", "des mots comme...", "des questions précises").
+   - EXTRACTION EXHAUSTIVE OBLIGATOIRE :
+     * Cite les noms exacts des vidéos et personnages présents dans les diapositives (ex: "vidéo Nada", "vidéo Majd x2", prénoms exacts).
+     * Liste TOUS les mots/exemples cibles par série (Série 1, Série 2...) et les mots exacts dictés sur les ardoises ou choisis à main levée.
+     * Cite mot pour mot les questions guidées de la scène (ex: "Qui est-ce ? Que fait-il ? ...") et leurs réponses clés.
+     * Cite le numéro et l'intitulé exact de l'activité du livret (ex: "Livret p. 23, Act. 1 « ... »"), les consignes/phrases exactes des élèves en binômes, et la clôture / devoir à la maison s'ils figurent en fin de séance.
+   - SOUS-TITRES ("label") PRÉCIS ET CONCRETS : utilise des sous-titres opérationnels tirés du contenu réel (ex: "Série 1 (vidéo + genre des noms)", "Vérification sur les ardoises", "Série 2 (vidéo + jeu du genre)", "Observation et modélisation", "Questions guidées sur la scène", "Prise de parole au tableau", "Pratique en binômes (Livret p. ..., Act. ...)", "Accompagnement individuel", "Clôture et devoir à la maison"). Ne jamais écrire le mot littéral "text" ou "label" comme valeur.
 
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit de la séance'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre exact de la diapositive]","duration":"15 min","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num or 'numéro déduit'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT de la diapositive]","duration":"25 min","bullets":[{{"label":"Sous-titre opérationnel précis","text":"Verbe à l'infinitif + contenu exact et exhaustif de la diapositive..."}}]}}]}}"""
     else:
         station_rule = (
             f"التزم باستخراج ({stations}) محطات بالضبط من مراحل الحصة الواردة في الشرائح."
             if stations > 0 else
-            "استخرج العدد الحقيقي الدقيق للمحطات الواردة في شريحة تنظيم الحصة وعناوين الشرائح الفاصلة (بحد أقصى 6 محطات)، دون دمج محطتين مستقلتين أو إضافة محطة غير موجودة في الملف."
+            "استخرج العدد الحقيقي الدقيق للمحطات الواردة في شريحة «مراحل الدرس / تنظيم الحصة» والشرائح الفاصلة (بحد أقصى 6 محطات)، دون دمج محطتين مستقلتين أو إضافة محطة غير موجودة."
         )
         system_prompt = f"""أنت مفتش وخبير بيداغوجي في برنامج التعليم الصريح بالمدرسة الرائدة بالمغرب.
-حلّل شرائح الدرس المرفقة بدقة متناهية وصمّم الخطاطة البيداغوجية بأمانة حرفية مطلقة لمحتوى الشرائح:
+حلّل جميع شرائح الدرس المرفقة بدقة متناهية وصمّم الخطاطة البيداغوجية التشغيلية بأمانة حرفية مطلقة لمحتوى الشرائح:
 
-1. قاعدة اللغة:
+1. قاعدة اللغة والأرقام:
    - رد باللغة العربية الفصحى 100% ("lang": "ar").
+   - اكتب أرقام الصفحات والأنشطة والمدد بالأرقام دائماً (مثال: ص. 22، النشاط 3، 10 د) وليس بالحروف.
 
-2. قاعدة صارمة — المطابقة الحرفية لعناوين المحطات:
-   - افحص أولاً شريحة «تنظيم الحصة / برنامج الحصة / المراحل» والشرائح الفاصلة بين كل نشاط وآخر.
-   - يجب أن يكون حقل "title" لكل محطة **مطابقاً حرفياً 100%** للعنوان المكتوب في الشريحة (مثل: «أنشطة اعتيادية»، «معجم»، «الاستماع والتحدث»، «قراءة»، «خط ونقل»... تماماً كما كُتب في الشريحة).
-   - يُمنع منعاً باتاً إعادة صياغة العنوان أو استبداله بمسميات عامة لم ترد في الشريحة (مثل تحويل «أنشطة اعتيادية» إلى «افتتاح الحصة» أو «التهيئة»).
+2. عناوين المحطات — مطابقة حرفية مطلقة:
+   - افحص شريحة «مراحل الدرس / تنظيم الحصة» والشرائح الفاصلة.
+   - انسخ حقل "title" لكل محطة **حرفياً 100%** كما كُتب في الشريحة دون أي تغيير.
+   - يُمنع منعاً باتاً استبدال عنوان الشريحة بمسميات نظرية عامة (مثل «النمذجة والممارسة الموجهة» أو «الممارسة المستقلة») ما لم ترد حرفياً كعنوان للمحطة في الشريحة.
 
-3. قاعدة صارمة — المطابقة الحرفية لمدد المحطات:
-   - استخرج **المدة الزمنية الدقيقة** لكل محطة تماماً كما وردت في شريحة تنظيم الحصة أو رأس الشريحة (مثال: `(10د)` -> `"10 د"`، `(20د)` -> `"20 د"`، `(40)` أو `(40د)` -> `"40 د"`، `(5د)` -> `"5 د"`).
-   - يُمنع منعاً باتاً تغيير أو تقريب أو إعادة توزيع أي مدة مذكورة صراحةً في الشرائح. لا تقدّر المدة إلا إذا كانت غير مذكورة إطلاقاً في أي شريحة.
+3. مدد المحطات — مطابقة حرفية مطلقة:
+   - استخرج المدة الدقيقة لكل محطة كما وردت في الشريحة أو في صور الساعات المرفقة (مثال: `"10 د"`، `"25 د"`، `"20 د"`، `"5 د"`). يُمنع تعديل أو إعادة توزيع أي مدة صريحة.
    - {station_rule}
 
-4. بيانات الترويسة الدقيقة (المعطيات المتوفرة: المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
-   - header_title: "[اسم المادة فقط دون مكونات فرعية بين قوسين] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
-   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس] (الكراسة: ص. [أرقام الصفحات الدقيقة الواردة في الشرائح])"
-   - objectives: أهداف التعلم الدقيقة كما وردت في شرائح الدرس.
+4. الترويسة والأهداف الشاملة (المعطيات: المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
+   - header_title: "[اسم المادة فقط دون قوسين] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}"
+   - lesson_subtitle: "برنامج التعليم الصريح | [العنوان الدقيق للدرس كما في الشرائح] (الكراسة: ص. [أرقام الصفحات])"
+   - objectives: أهداف التعلم الدقيقة مع ذكر عتبة التحكم إن وردت، وسرد المفاهيم أو الكلمات أو القواعد المستهدفة بدقة دون تعميم.
 
-5. المضمون البيداغوجي داخل كل محطة:
-   - اكتب داخل كل محطة **3 فقرات بيداغوجية مركزة ومتناسقة** (لكل فقرة حقلان: "label" لعنوان فرعي عربي قصير من كلمتين مثل «النمذجة» أو «الملاحظة والتوقع»، وحقل "text" لتفصيل النشاط بحدود 14 إلى 22 كلمة؛ يُمنع تماماً كتابة كلمة text أو label كقيمة!) مستخلصة حصراً من الشرائح التابعة لتلك المحطة، مع ذكر تفصيل المستوى 1 والمستوى 2 في الأقسام المشتركة، والكلمات البصرية والأمثلة الحرفية وأرقام صفحات الكراسة.
+5. المضمون التشغيلي والشامل داخل كل محطة:
+   - اكتب 3 فقرات عملية مركزة ومشبعة بالتفاصيل الحرفية لكل محطة (18 إلى 34 كلمة لكل فقرة).
+   - لكل فقرة حقلان: "label" لعنوان فرعي عملي دقيق من واقع النشاط (مثل «تصحيح الواجب»، «فيديو النمذجة»، «التحقق على الألواح»، «العمل في ثنائيات (ص. 20)»، «التتبع الفردي والواجب المنزلي»)، وحقل "text" يبدأ بفعل إجرائي أو مصدر مباشر دون حشو إنشائي. يُمنع تماماً كتابة كلمة text أو label كقيمة.
+   - اذكر كافة الكلمات البصرية، الأمثلة الحرفية، أسماء الفيديوهات، الأسئلة الموجهة، تفصيل المستوى 1 والمستوى 2 في الأقسام المشتركة، أرقام الأنشطة والصفحات، والواجب المنزلي الوارد في الشرائح.
 
 أرجع JSON صالحاً فقط:
-{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة المستنتج من الدرس'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[العنوان الحرفي من الشريحة]","duration":"15 د","bullets":[{{"label":"...","text":"..."}}]}}]}}"""
+{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة'}","header_title":"...","lesson_subtitle":"...","objectives":"...","subject_level":"...","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[العنوان الحرفي من الشريحة]","duration":"15 د","bullets":[{{"label":"عنوان فرعي عملي دقيق","text":"وصف إجرائي دقيق وشامل لمحتوى الشريحة..."}}]}}]}}"""
 
-    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: If an attached image of the lesson plan/stages slide is provided, inspect every clock/timer icon visually in that image to copy the EXACT duration of EACH station verbatim alongside its EXACT station title, because timer icons in PowerPoint are embedded images):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and copy exact station titles and exact durations verbatim from the slides.")}]
+    parts = [{"text": system_prompt + "\n\nLesson Slides Content (CRITICAL: If an attached image of the lesson plan/stages slide is provided, inspect every clock/timer icon visually in that image to copy the EXACT duration of EACH station verbatim alongside its EXACT station title, because timer icons in PowerPoint are embedded images):\n" + (text[:40000] if text else "Analyze the attached lesson file thoroughly and copy exact station titles, exact durations, and exhaustive concrete details verbatim from the slides.")}]
     if file_b64 and mime_type:
         parts.append({"inline_data": {"mime_type": mime_type, "data": file_b64}})
 
