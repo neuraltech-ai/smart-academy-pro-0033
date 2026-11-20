@@ -1998,6 +1998,88 @@ HTML_TEMPLATE = r"""
     </script>
 
 
+
+<script id="ncm-auto-meta">
+(function() {
+  const IDS = {"level": "metaLevel", "periode": "metaPeriode", "unite": "metaUnite", "semaine": "metaSemaine", "seance": "metaSeance", "ncm_num": "ncmNumInput", "file_input": "ncmFileInput"};
+
+  function parseMetaFromFilename(filename) {
+    const base = String(filename || '').replace(/\.[^.]+$/, '');
+    const pick = (patterns) => {
+      for (const rx of patterns) {
+        const m = base.match(rx);
+        if (m && m[1]) return m[1];
+      }
+      return '';
+    };
+    return {
+      level: pick([
+        /(?:^|[\s_\-\.\(\)])(?:N|NIV|NIVEAU)[\s_\-]?(\d+)(?=$|[\s_\-\.\(\)])/i,
+        /(?:المستوى|م)[\s_\-]?(\d+)/
+      ]),
+      periode: pick([
+        /(?:^|[\s_\-\.\(\)])(?:P|PER|PERIODE|PÉRIODE)[\s_\-]?(\d+)(?=$|[\s_\-\.\(\)])/i,
+        /(?:المرحلة)[\s_\-]?(\d+)/
+      ]),
+      unite: pick([
+        /(?:^|[\s_\-\.\(\)])(?:U|UD|UNITE|UNITÉ)[\s_\-]?(\d+)(?=$|[\s_\-\.\(\)])/i,
+        /(?:الوحدة)[\s_\-]?(\d+)/
+      ]),
+      semaine: pick([
+        /(?:^|[\s_\-\.\(\)])(?:SEM|SM|SEMAINE)[\s_\-]?(\d+)(?=$|[\s_\-\.\(\)])/i,
+        /(?:الأسبوع|الاسبوع)[\s_\-]?(\d+)/
+      ]),
+      seance: pick([
+        /(?:^|[\s_\-\.\(\)])(?:S|SE|SEA|SEANCE|SÉANCE)[\s_\-]?(\d+)(?=$|[\s_\-\.\(\)])/i,
+        /(?:الحصة)[\s_\-]?(\d+)/
+      ]),
+      ncm_num: pick([
+        /(?:^|[\s_\-\.\(\)])(?:NCM|FICHE)[\s_\-]?(\d+)(?=$|[\s_\-\.\(\)])/i,
+        /(?:خطاطة)[\s_\-]?(\d+)/
+      ])
+    };
+  }
+
+  function applyMetaValue(id, val) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.tagName === 'SELECT') {
+      const hasOpt = Array.from(el.options).some(o => o.value === val);
+      if (hasOpt) el.value = val;
+    } else {
+      el.value = val || '';
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function syncFieldsFromFile(fileInput) {
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    const parsed = file ? parseMetaFromFilename(file.name) : {
+      level: '', periode: '', unite: '', semaine: '', seance: '', ncm_num: ''
+    };
+    ['level', 'periode', 'unite', 'semaine', 'seance', 'ncm_num'].forEach(k => {
+      applyMetaValue(IDS[k], parsed[k]);
+    });
+  }
+
+  function initAutoMeta() {
+    const fileInput = document.getElementById(IDS.file_input);
+    if (!fileInput || fileInput.dataset.autoMetaBound) return;
+    fileInput.dataset.autoMetaBound = '1';
+    // التنفيذ في مرحلة الالتقاط (capture) لمسح القيم القديمة وتعبئة قيم الملف الجديد قبل أي معالج آخر
+    fileInput.addEventListener('change', function() {
+      syncFieldsFromFile(fileInput);
+    }, true);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initAutoMeta);
+  } else {
+    initAutoMeta();
+  }
+})();
+</script>
+
 </body>
 </html>
 """
