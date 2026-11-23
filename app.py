@@ -901,6 +901,15 @@ HTML_TEMPLATE = r"""
             }
         }
     </style>
+<style id="ncm-bidi-fix">
+[dir="rtl"] .ncm-objectives-box,
+[dir="rtl"] .ncm-col-center,
+[dir="rtl"] .ncm-col,
+[dir="rtl"] .ncm-col li,
+[dir="rtl"] .ncm-col p {
+    unicode-bidi: isolate;
+}
+</style>
 </head>
 <body class="p-3 md:p-6">
     <div class="max-w-6xl mx-auto no-print mb-6">
@@ -2095,49 +2104,52 @@ def handle_pptx():
     return jsonify({'text': extract_pptx_text(request.files['file'].stream)})
 
 def fix_arabic_bidi(s):
-    """إصلاح اتجاه العمليات الحسابية ومنع انقلاب الأقواس بجوار الأرقام عند التصدير لـ PDF"""
+    """إصلاح جذري لاتجاه الأقواس والأرقام والنسب والعمليات الحسابية في العربية عند التصدير لـ PDF"""
     if not s:
         return s
-    s = re.sub(r'\(\s*ص\.?\s*\((\d+(?:\s*[-–]\s*\d+)?)\)\s*\)?', r'(ص. \1)', s)
+    RLI, LRI, PDI, RLM = '\u2067', '\u2066', '\u2069', '\u200F'
+    # تنظيف أي محارف اتجاه سابقة لإعادة بنائها بنظافة
+    s = re.sub(r'[\u200E\u200F\u202A-\u202E\u2066-\u2069]', '', str(s))
+
+    # إصلاح الأقواس المزدوجة أو المكسورة مثل (ص. (53) أو (5) متعلمين)
+    s = re.sub(r'\(\s*ص\.?\s*\((\d+(?:\s*[-–،,و]\s*\d+)*)\)\s*\)?', r'(ص. \1)', s)
+    s = re.sub(r'\(\s*(\d+)\s*\)\s*([\u0600-\u06FF][^()]*?)\s*\)', r'(\1 \2)', s)
+
+    # ربط أرقام الصفحات المتجاورة بحرف العطف "و" بدل تركها مفصولة بفراغ فقط (مثل ص. 47 53 -> ص. 47 و53)
+    s = re.sub(r'(ص\.?\s*\d+)\s+(\d+)(?=\s|[،,\-\–\)]|$)', r'\1 و\2', s)
+
+    # عزل العمليات الحسابية (مثل 700 + 90 + 3) باتجاه يسار-يمين
     s = re.sub(
-        r'(?<!\u200E)\b(\d+(?:\s*(?:[+×÷=]|\s-\s)\s*\d+)+)\b(?!\u200E)',
-        lambda m: '\u200E' + re.sub(r'\s*([+\-×÷=])\s*', r' \1 ', m.group(1)).strip() + '\u200E',
+        r'\b(\d+(?:\s*(?:[+×÷=]|\s-\s)\s*\d+)+)\b',
+        lambda m: LRI + re.sub(r'\s*([+\-×÷=])\s*', r' \1 ', m.group(1)).strip() + PDI,
         s
     )
-    s = re.sub(r'\((\d+)\)', '(\u200F' + r'\1' + '\u200F)', s)
-    s = re.sub(r'(\d)\)', r'\1' + '\u200F)', s)
-    s = re.sub(r'\u200E{2,}', '\u200E', s)
-    s = re.sub(r'\u200F{2,}', '\u200F', s)
-    return s
 
-def extract_slide_duration_hints(text):
-    """استخراج جميع السطور التي تحتوي على مدد زمنية من نص الشرائح حرفياً للتحقق البصري والنصي"""
-    if not text:
-        return ""
-    dur_rx = re.compile(
-        r'(?:\d+\s*(?:دقيقة|دقائق|دق|د(?![\u0600-\u06FF])|min\.?|mn\b|\')|(?:دقيقة\s+واحدة|دقيقتان|دقيقتين))',
-        re.IGNORECASE
-    )
-    hints = []
-    seen = set()
-    for raw_ln in str(text).splitlines():
-        ln = re.sub(r'\s+', ' ', raw_ln).strip()
-        if not ln or len(ln) > 160:
-            continue
-        if dur_rx.search(ln) and ln not in seen:
-            seen.add(ln)
-            hints.append(ln)
-            if len(hints) >= 28:
-                break
-    if not hints:
-        return ""
-    return "\n[مؤشرات المدد المستخرجة حرفياً من نص الشرائح — التزم بها وبالقراءة البصرية لأيقونات الساعات حرفياً]:\n- " + "\n- ".join(hints) + "\n"
+    # عزل النسب المئوية (مثل 80%) حتى لا تختفي أو تنقلب علامة %
+    s = re.sub(r'(\d+(?:[.,]\d+)?)\s*%', lambda m: LRI + m.group(1) + '%' + PDI, s)
+
+    # عزل كل عبارة بين قوسين داخل RLI...PDI لضمان ثبات القوسين بجوار الأرقام في PDF
+    def wrap_paren(m):
+        inner = m.group(1).strip()
+        if inner == 'ة':
+            return '(ة)'
+        if re.search(r'[\u0600-\u06FF]', inner):
+            prefix = RLM if re.match(r'^[\d\u2066]', inner) else ''
+            suffix = RLM if re.search(r'[\d%\u2069]$', inner) else ''
+            return RLI + '(' + prefix + inner + suffix + ')' + PDI
+        if re.fullmatch(r'\d+(?:\s*[-–]\s*\d+)?', inner):
+            return RLI + '(' + RLM + inner + RLM + ')' + PDI
+        return '(' + inner + ')'
+
+    s = re.sub(r'\(([^()]+)\)', wrap_paren, s)
+    return s
 
 def clean_ar_text(s, is_objective=False):
     if not s:
         return s
     s = re.sub(r'\$([^$]+)\$', r'\1', str(s)).replace('>=', '≥').replace('<=', '≤')
-    # حذف التذكير بموعد التصحيح في الحصة المقبلة فقط دون المساس بأي عبارة أصلية من الشرائح
+    s = s.replace('<<', '«').replace('>>', '»')
+    # حذف التذكير بموعد التصحيح في الحصة المقبلة فقط
     s = re.sub(
         r'[،,]?\s*(?:مع|و)\s*(?:التذكير|الإشارة|التنبيه)\s*(?:ب|إلى)\s*(?:موعد\s+)?(?:التصحيح|تصحيحها|تصحيحه|الحصة)[^.،]*',
         '',
@@ -2151,23 +2163,35 @@ def clean_ar_text(s, is_objective=False):
     if is_objective:
         s = re.sub(r'\s+بدقة(?:\s+تامة)?(?=\s*[.،؛]|$)', '', s)
         s = re.sub(r'\s*\+\s*', ' و', s)
+        # ضمان صياغة عتبة التحكم بقوسين متوازنين وعلامة %
+        s = re.sub(
+            r'\(?\s*عتبة\s+التحكم\s*[=≥>]\s*(\d+)\s*%?\s*\)?\s*:?\s*',
+            r'(عتبة التحكم ≥ \1%): ',
+            s
+        )
     # توحيد الصيغة المؤسساتية الأستاذ(ة)
     s = re.sub(r'(الأستاذ|للأستاذ)(?!\s*\(ة\)|ة)', r'\1(ة)', s)
     # تنظيف علامات الترقيم والمسافات
     s = re.sub(r'\s+([.،؛:])', r'\1', s)
+    s = re.sub(r':(?=[^\s\d\u2066\u2067])', ': ', s)
     s = re.sub(r'[،,]\s*(?=\.|$)', '', s)
     s = re.sub(r'\.{2,}', '.', s)
     s = re.sub(r'\s{2,}', ' ', s).strip()
     return fix_arabic_bidi(s)
 
 def polish_ncm_output(res_json, is_fr=False):
-    """تنقية شكلية نهائية دون تغيير المضامين أو العبارات الحرفية الواردة في الشرائح"""
+    """تنقية شكلية وبصرية نهائية دون المساس بالمضامين الحرفية للشرائح"""
     if not isinstance(res_json, dict):
         return res_json
 
+    RLI, PDI, RLM = '\u2067', '\u2069', '\u200F'
     banned_whole_re = re.compile(
         r'(موعد\s+الحصة\s+القادمة|موعد\s+الحصة\s+المقبلة|إلى\s+اللقاء|نلتقي\s+في\s+الحصة|اللقاء\s+في\s+الحصة|à\s+bientôt|au\s+revoir|prochaine\s+séance)',
         re.IGNORECASE
+    )
+
+    ar_comp_colon_re = re.compile(
+        r'^(افتتاح\s+(?:الحصة|الدرس)|قراءة|القراءة|استماع\s+وتحدث|الاستماع\s+والتحدث|تمارين\s+كتابية|التمارين\s+الكتابية)\s+(?!:|و|في\b|الدرس\b|الحصة\b)(.+)$'
     )
 
     for st in (res_json.get('stations') or []):
@@ -2179,6 +2203,12 @@ def polish_ncm_output(res_json, is_fr=False):
             st_title = re.sub(r'\s+»', ' »', st_title)
             if is_fr:
                 st_title = re.sub(r'\s*&\s*', ' et ', st_title)
+            else:
+                st_title = re.sub(r'\s+:', ':', st_title)
+                if ':' not in st_title:
+                    m_c = ar_comp_colon_re.match(st_title)
+                    if m_c:
+                        st_title = f"{m_c.group(1)}: {m_c.group(2)}"
             st_title = st_title.rstrip('.،؛:').strip()
             st_title = re.sub(r'\s{2,}', ' ', st_title)
             st['title'] = st_title if is_fr else fix_arabic_bidi(st_title)
@@ -2230,9 +2260,10 @@ def polish_ncm_output(res_json, is_fr=False):
             sub = re.sub(r'\s{2,}', ' ', sub).strip()
             res_json['lesson_subtitle'] = sub
         else:
+            sub = re.sub(r'قراءة\s+استماع\s+وتحدث', 'قراءة، استماع وتحدث', sub)
             sub = re.sub(
                 r'\s*[\(\[]?\s*(الكراسة\s*[:：]\s*ص\.?\s*[^()\[\]]+?)\s*[\)\]]?\s*$',
-                lambda m: ' (\u200F' + m.group(1).strip() + '\u200F)',
+                lambda m: ' (' + m.group(1).strip() + ')',
                 sub
             )
             sub = re.sub(r'(من\s+\d+\s+إلى\s+\d+)\s+(?!:|[:：\(])(?=[\u0600-\u06FF])', r'\1: ', sub)
@@ -2250,10 +2281,17 @@ def polish_ncm_output(res_json, is_fr=False):
 
     if res_json.get('seance_ncm_badge') and not is_fr:
         res_json['seance_ncm_badge'] = fix_arabic_bidi(str(res_json['seance_ncm_badge']).strip())
+
     lp = str(res_json.get('livret_pages') or '').strip()
     if lp:
         lp = lp.strip('()').strip()
-        res_json['livret_pages'] = lp if is_fr else fix_arabic_bidi(lp)
+        if is_fr:
+            res_json['livret_pages'] = lp
+        else:
+            # صياغة موحدة ومحمية لصفحات الكراسة داخل الشارة المركزية لمنع انقلابها
+            lp = re.sub(r'(ص\.?\s*\d+)\s*[،,]\s*(\d+)$', r'\1 و\2', lp)
+            lp = fix_arabic_bidi(lp)
+            res_json['livret_pages'] = RLI + lp + RLM + PDI
 
     return res_json
 
@@ -2294,23 +2332,23 @@ def generate_ncm():
             "Extrais EXACTEMENT le nombre réel de stations figurant sur la diapositive de plan/organisation (jusqu'à 6 maximum), sans fusionner ni inventer d'étapes."
         )
         system_prompt = f"""Tu es un inspecteur pédagogique expert de l'Enseignement Explicite (École Pionnière au Maroc).
-Ta mission : produire une fiche NCM structurée, synthétique et D'UNE FIDÉLITÉ LITTÉRALE ABSOLUE aux diapositives fournies (ZÉRO AJOUT, ZÉRO OMISSION), tenant proprement sur UNE SEULE page A4 paysage :
+Ta mission : produire une fiche NCM structurée, complète et D'UNE FIDÉLITÉ LITTÉRALE ABSOLUE aux diapositives fournies (ZÉRO AJOUT, ZÉRO OMISSION, ZÉRO FAUTE D'ORTHOGRAPHE), tenant proprement sur UNE SEULE page A4 paysage :
 
-1. RÈGLE DE FIDÉLITÉ (ZÉRO AJOUT / ZÉRO OMISSION) :
-   - Chaque titre, durée, objectif, activité, numéro d'exercice, page, mot cible, exemple et consigne doit provenir EXCLUSIVEMENT des diapositives jointes.
-   - INTERDICTION ABSOLUE d'inventer une information absente des diapositives ou d'omettre une activité/consigne présente dans les diapositives.
+1. RÈGLE DE FIDÉLITÉ ABSOLUE (ZÉRO AJOUT / ZÉRO OMISSION) :
+   - Chaque titre, durée, objectif, activité, numéro d'exercice, page, mot cible, exemple, phrase modèle et micro-durée doit provenir EXCLUSIVEMENT des diapositives jointes.
+   - INTERDICTION ABSOLUE d'inventer une information absente des diapositives ou d'omettre une activité, phrase exemple ou consigne clé présente dans les diapositives.
 
 2. TITRES ET DURÉES DES STATIONS — COPIE LITTÉRALE STRICTE :
    - Copie MOT POUR MOT le TITRE PRINCIPAL du bandeau numéroté sur la diapositive « Plan de la séance » (sans le numéro initial ni point final).
    - Lis avec une rigueur absolue le chiffre exact inscrit dans CHAQUE icône d'horloge (image jointe) ET dans le texte des diapositives. Ne devine JAMAIS une durée.
-   - Si la séance se termine par une clôture / devoir à la maison sans icône d'horloge dédiée sur le plan, intègre-la comme dernière puce (« Clôture et devoir ») dans la dernière station afin qu'aucune information ne soit perdue.
+   - Si la séance se termine par une clôture / devoir à la maison sans icône d'horloge dédiée sur le plan, intègre-la comme dernière puce (« Clôture et devoir ») dans la dernière station.
    - {station_rule}
 
-3. DÉCOMPOSITION OBLIGATOIRE EN 2 À 3 PUCES DISTINCTES (JAMAIS UN SEUL GROS BLOC) :
-   - INTERDICTION de regrouper toutes les activités d'une station dans une seule longue puce.
-   - Décompose CHAQUE station en **2 à 3 sous-étapes distinctes, courtes et lisibles** (12 à 22 mots par "text").
-   - Place dans le "label" (2 à 6 mots) le sous-titre opérationnel accompagné du support, de la page ou de la micro-durée entre parenthèses lorsqu'ils figurent dans les diapositives (ex : "Ardoises (5 min)", "Travail en binômes (p. 26)", "Clôture et devoir (p. 27)").
-   - Commence chaque "text" par un verbe à l'INFINITIF en conservant les exemples exacts, guillemets « ... », flèche « → » pour question/réponse et numéros d'activités/pages. Ne cite pas les numéros internes de diapositives et n'inclus pas de formules d'au revoir.
+3. DÉCOMPOSITION EN 2 À 3 PUCES DISTINCTES (NE JAMAIS FUSIONNER DEUX SOUS-ACTIVITÉS DISTINCTES) :
+   - Lorsque la station comporte 3 sous-activités distinctes dans les diapositives, rédige **3 puces distinctes** (jamais fusionner deux activités différentes en une seule puce).
+   - Longueur de chaque "text" : **12 à 26 mots** pour conserver tous les exemples concrets, micro-durées et numéros d'activités sans tronquer.
+   - Place dans le "label" (2 à 6 mots) le sous-titre opérationnel accompagné du support, de la page ou de la micro-durée entre parenthèses lorsqu'ils figurent dans les diapositives (ex : "Ardoises (5 min)", "Binômes (p. 26)", "Clôture et devoir (p. 27)").
+   - Commence chaque "text" par un verbe à l'INFINITIF en utilisant « ... » pour les citations, « → » pour question/réponse et « • » pour séparer deux phrases modèles. Ne cite pas les numéros internes de diapositives et n'inclus aucune formule d'au revoir.
 
 4. EN-TÊTE ET OBJECTIFS (Métadonnées : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
    - Dans "lesson_subtitle" et "livret_pages", regroupe toutes les pages du livret propres à la séance du jour et au devoir du jour (jamais les pages de correction des devoirs précédents ni du calcul mental).
@@ -2318,7 +2356,7 @@ Ta mission : produire une fiche NCM structurée, synthétique et D'UNE FIDÉLIT�
    - Conventions : 100% français ("lang":"fr"), « et » (jamais « & »), « NCM », « « ... » », « ≥ », numéros en chiffres.
 
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num or 'numéro'}","header_title":"[Matière] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}","lesson_subtitle":"Enseignement explicite | [Intitulé exact] (Livret : p. ...)","objectives":"(seuil de maîtrise ≥ 80%) : ...","subject_level":"[Matière] – Niveau {lvl or '...'}","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT du bandeau]","duration":"[Durée EXACTE]","bullets":[{{"label":"Sous-étape (support / page)","text":"Verbe à l'infinitif + contenu exact en 12 à 22 mots."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num or 'numéro'}","header_title":"[Matière] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}","lesson_subtitle":"Enseignement explicite | [Intitulé exact] (Livret : p. ...)","objectives":"(seuil de maîtrise ≥ 80%) : ...","subject_level":"[Matière] – Niveau {lvl or '...'}","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT du bandeau]","duration":"[Durée EXACTE]","bullets":[{{"label":"Sous-étape (support / page)","text":"Verbe à l'infinitif + contenu exact et complet en 12 à 26 mots."}}]}}]}}"""
     else:
         station_rule = (
             f"التزم باستخراج ({stations}) محطات بالضبط كما وردت في شريحة هيكلة/تنظيم الحصة."
@@ -2326,49 +2364,48 @@ Retourne UNIQUEMENT un objet JSON valide :
             "استخرج العدد الحقيقي الدقيق للمحطات ذات التوقيت في شريحة «هيكلة حصة اليوم / تنظيم الحصة / مراحل الدرس» (بحد أقصى 6 محطات)."
         )
         system_prompt = f"""أنت مفتش تربوي وخبير بيداغوجي في برنامج التعليم الصريح بالمدرسة الرائدة بالمغرب (جميع المواد: اللغة العربية، الرياضيات، النشاط العلمي...).
-مهمتك: بناء خطاطة بيداغوجية رسمية **مفكّكة باحترافية عالية وسهلة المسح البصري**، مع **التزام حرفي وتام بما ورد في الشرائح المرفقة فقط (لا زيادة من عندك ولا نقصان)**، لتستقر بأناقة في صفحة A4 واحدة:
+مهمتك: بناء خطاطة بيداغوجية رسمية **بمعيار النشر الاحترافي**، مفكّكة بدقة وسهلة المسح البصري، مع **التزام حرفي وتام بما ورد في الشرائح المرفقة فقط (لا زيادة من عندك، لا إسقاط لمثال، ولا خطأ إملائي)**، لتستقر بأناقة في صفحة A4 واحدة:
 
-1. القاعدة الذهبية الأولى — التفكيك الإلزامي لكل محطة إلى 2 أو 3 فقرات متميزة (ممنوع الفقرة الواحدة المكدّسة!):
-   - **يُمنع منعاً باتاً** تجميع جميع أنشطة المحطة في فقرة واحدة طويلة أو نسخ سطر شريحة الهيكلة كعنوان وحيد للفقرة.
-   - فكّك **كل محطة** إلى **فقرتين إلى 3 فقرات إجرائية قصيرة ومنظمة** تعكس التسلسل الحقيقي لأنشطة الشرائح داخل تلك المحطة (10 إلى 22 كلمة لكل فقرة "text").
-   - اجعل كل عنوان فرعي ("label") مركزاً وواضحاً (2 إلى 6 كلمات) يضم بين قوسين **الوسيلة أو الصفحة أو المدة الجزئية** كلما وردت في الشرائح، على هذا النسق الاحترافي:
-     * مثال 1 (افتتاح): `الترحيب وتدبير السلوك` / `تحدي الطلاقة (دقيقة صامتة + 5 متعلمين)` / `إملاء (الألواح)`
-     * مثال 2 (قراءة): `التذكير والقراءة الجهرية` / `ترتيب أحداث النص` / `بناء السؤال المناسب (الدفاتر)`
-     * مثال 3 (استماع وتحدث): `النمذجة والوعي بالأسلوب` / `الإنتاج التواصلي (ثنائيات ومشاهد)` / `الإنشاد`
-     * مثال 4 (تمارين واختتام): `التحويلات مع الضمائر (ص. 53)` / `تركيب جمل فعلية (الدفاتر)` / `الاختتام والواجب المنزلي`
-   - هذا النسق للتنظيم البنائي فقط: استخرج العناوين الفرعية والمضامين حصراً مما يوجد فعلياً في شرائح الدرس الحالي دون أي اختلاق.
+1. القاعدة الذهبية الأولى — التفكيك الدقيق إلى 3 فقرات متميزة عند تعدد الأنشطة (يُمنع دمج نشاطين مختلفين!):
+   - إذا اشتملت المحطة في الشرائح على 3 أنشطة فرعية متميزة، أخرجها في **3 فقرات مستقلة ومنظمة** (وإذا لم تتضمن إلا نشاطين فقط فأخرجها في فقرتين؛ لا تدمج نشاطين مختلفين في فقرة واحدة، ولا تختلق فقرة غير موجودة).
+   - مثال على الفصل النظيف: في الافتتاح افصل `الترحيب وتدبير السلوك` عن `تحدي الطلاقة` عن `الإملاء`؛ وفي القراءة افصل `التذكير والقراءة الجهرية` عن `ترتيب أحداث النص` عن `بناء السؤال المناسب (الدفاتر)`؛ وفي الاستماع والتحدث افصل `النمذجة والوعي بالأسلوب` عن `الإنتاج التواصلي (ثنائيات ومشاهد)` عن `الإنشاد`؛ وفي التمارين الكتابية افصل `التحويلات مع الضمائر` عن `تركيب الجمل (الدفاتر)` عن `الاختتام والواجب المنزلي`.
+   - طول كل فقرة "text": **12 إلى 26 كلمة** مركزة وكافية لحفظ جميع الجمل النموذجية والأمثلة والمدد الجزئية دون بتر.
+   - اجعل كل عنوان فرعي ("label") واضحاً ومختصراً (2 إلى 6 كلمات) يضم بين قوسين **الدعامة أو الصفحة أو المدة الجزئية** كما وردت في الشرائح (مثل: `تحدي الطلاقة (دقيقة صامتة + 5 متعلمين)`، `إملاء (الألواح)`، `بناء السؤال المناسب (الدفاتر)`، `التحويلات مع الضمائر (ص. 53)`).
 
-2. القاعدة الذهبية الثانية — المدد الحرفية ومعالجة «اختتام الحصة» دون أي إسقاط:
-   - اقرأ الرقم الدقيق داخل كل أيقونة ساعة في صورة شريحة «هيكلة حصة اليوم / تنظيم الحصة» وانسخه حرفياً بصيغة `[الرقم] د` مهما كان مجموع الحصة (قد يكون 60 د أو 90 د مثل `10 د، 30 د، 20 د، 30 د`، فلا تخمّن أبداً).
-   - **قاعدة «اختتام الحصة / الدرس»:**
-     * إذا كان لاختتام الدرس أيقونة ساعة خاصة به في شريحة التنظيم (مثل `5 د` في الرياضيات)، فأدرجه كمحطة أخيرة مستقلة.
-     * أما إذا وردت شرائح «اختتام الحصة» في نهاية العرض (خلاصة التعلمات، الواجب المنزلي، تقدير نسبة التحكم) **دون أيقونة ساعة مستقلة في شريحة الهيكلة** (كما في حصص اللغة العربية ذات 4 محطات موقّتة)، **فلا تُسقطها أبداً**! بل أدرجها كفقرة أخيرة (`الاختتام والواجب المنزلي`) داخل المحطة الأخيرة وأضف `واختتام الحصة` إلى عنوان المحطة الأخيرة (مثال: `التمارين الكتابية واختتام الحصة`).
+2. القاعدة الذهبية الثانية — المدد الحرفية ومعالجة «اختتام الحصة»:
+   - اقرأ الرقم الدقيق داخل كل أيقونة ساعة في صورة شريحة «هيكلة حصة اليوم / تنظيم الحصة» وانسخه حرفياً بصيغة `[الرقم] د` مهما كان مجموع الحصة (60 د أو 90 د مثل `10 د، 30 د، 20 د، 30 د`).
+   - إذا كان لاختتام الدرس أيقونة ساعة خاصة به فأدرجه كمحطة أخيرة مستقلة؛ أما إذا وردت شرائح «اختتام الحصة» في نهاية العرض **دون أيقونة ساعة مستقلة في شريحة الهيكلة** فأدرجها حتماً كفقرة ثالثة (`الاختتام والواجب المنزلي`) داخل المحطة الأخيرة وأضف `واختتام الحصة` إلى عنوانها.
    - {station_rule}
 
-3. القاعدة الذهبية الثالثة — الأمانة الحرفية الكاملة (لا زيادة ولا نقصان ولا تحريف إملائي):
-   - **يُمنع منعاً باتاً** اختراع أي اسم نشيد أو مثال أو قاعدة أو رقم صفحة غير مذكور في الشرائح.
-   - **يُمنع منعاً باتاً** إسقاط أي نشاط فعلي ورد في الشرائح: انقل بدقة قواعد تدبير السلوك، عدد المتعلمين والمدد الجزئية، سجل الطلاقة، جميع كلمات الإملاء، الجمل النموذجية وأمثلة الترتيب والتحويل كلها (مع مراجعة الإملاء الحرفي للكلمات مثل `حَطَّ` وليس `حَجَّ`)، أساليب التحدث، التمييز بين `الألواح` و`الدفاتر` و`الكراسة` و`الثنائيات` و`الفردي`، ورقم سؤال وصفحة الواجب المنزلي.
-   - استعمل الأسلوب المصدري الإجرائي (دون أفعال أمر)، واستخدم `«...»` للجمل والنصوص، و`←` للربط بين الجواب والسؤال، و`•` للفصل بين جملتين نموذجيتين، و`الأستاذ(ة)` دائماً.
-   - لا تذكر عبارات التوديع («إلى اللقاء») ولا التذكير بموعد التصحيح في الحصة المقبلة ولا أرقام الشرائح الداخلية.
+3. القاعدة الذهبية الثالثة — الأمانة الحرفية الكاملة والدقة الإملائية (لا تحريف ولا إسقاط ولا اختلاق):
+   - **دقة إملائية حرفاً بحرف:** انسخ الكلمات والجمل العربية المشكّلة من نص الشرائح كما هي حرفياً دون تحريف أي حرف (انتبه خاصةً إلى الحروف المتشابهة مثل `ط/ظ` و`ث/ت` و`ح/خ/ج`، مثال: `حَطَّ` وليس `حَظَّ` أو `حَجَّ`، و`يُثابِرَ` وليس `يُتابِرَ`).
+   - **حظر الإسقاط (قائمة التحقق الإلزامية):** انقل بتركيز جميع العناصر الفعلية الواردة في الشرائح:
+     * قواعد تدبير السلوك ونجمة التميز المذكورة في الشرائح (مثل: الإنصات والانتباه، رفع الأصبع دون وقوف، وضع اللوحة والكراسة في القمطر).
+     * عدد المتعلمين والمدد الجزئية (مثل: `دقيقة صامتة`، `5 متعلمين`، `سجل الطلاقة`، `5 دقائق`).
+     * جميع الجمل النموذجية إذا تعددت في النشاط الواحد (مثل جملة القراءة النموذجية `«حَمَلَتْ كيكو إِلى العُشِّ»` وجملة التحويل `«أَنْقَذَتْ كيكو مِنَ القِطِّ»` معاً، وجملتي الترتيب معاً `«طارَ العُصْفورُ مِنَ العُشِّ» • «حَطَّ العُصْفورُ عَلى غُصْنِ الشَّجَرَةِ»`).
+     * الجواب والسؤال النموذجي مربوطَين بسهم `←` (مثال: `«طارَدَ القِطُّ البَرِّيُّ العُصْفورَ كيكو» ← «ماذا فَعَلَ القِطُّ البَرِّيُّ؟»`).
+     * جميع أساليب التحدث المذكورة (`«أُريدُ أَنْ...»` و`«اِحْذَرْ / اِحْذَري...»`)، والتمييز بين `الألواح` و`الدفاتر` و`الكراسة` و`الثنائيات` و`الفردي`، وأرقام أسئلة وصفحة الواجب المنزلي.
+   - **حظر الاختلاق:** لا تُضف أبداً اسم نص أو نشيد أو رقم صفحة أو مثال غير موجود في الشرائح.
+   - استعمل الأسلوب المصدري الإجرائي (دون أفعال أمر)، وصيغة `الأستاذ(ة)` دائماً، دون عبارات توديع أو تذكير بموعد التصحيح المقبل أو أرقام الشرائح الداخلية.
 
 4. عناوين المحطات والهدف والترويسة (المعطيات: المستوى={lvl}، المرحلة={per}، الوحدة={uni}، الأسبوع={sem}، الحصة={sea}):
-   - عنوان المحطة ("title"): العنوان الرئيسي من شريحة الهيكلة؛ وإذا كان قصيراً جداً (مثل «قراءة» أو «استماع وتحدث») يمكنك إقرانه بنقطتين وموضوعه المباشر من شريحة الهيكلة (مثال: `القراءة: تنمية الطلاقة واستثمار النص`، `الاستماع والتحدث: ورشة التحدث`).
-   - **هدف التعلم ("objectives"):** إذا وردت عتبة التحكم `80%` في شريحة الأهداف فابدأ بـ `(عتبة التحكم ≥ 80%): ` ثم الأهداف الحرفية من الشريحة مع استبدال `+` بحرف العطف `و`، ودون تكرار «أهداف التعلم» أو إضافة كلمة «بدقة».
+   - عنوان المحطة ("title"): العنوان الرئيسي من شريحة الهيكلة؛ وعند إقرانه بموضوعه الفرعي افصل بينهما دائماً بنقطتين رأسيتين `:` (مثال: `قراءة: تنمية الطلاقة واستثمار النص`، `استماع وتحدث: ورشة التحدث`).
+   - **هدف التعلم ("objectives"):** إذا وردت عتبة التحكم `80%` في شريحة الأهداف فابدأ بالصيغة الدقيقة `(عتبة التحكم ≥ 80%): ` ثم الأهداف الحرفية من الشريحة مع استبدال `+` بحرف العطف `و`، ودون كلمة «بدقة».
    - **الترويسة والشارة المركزية:**
      * "header_title": `[اسم المادة] – المستوى {lvl or '...'} | المرحلة {per or '...'} - الوحدة {uni or '...'} - الأسبوع {sem or '...'} - الحصة {sea or '...'}`
-     * "lesson_subtitle": `برنامج التعليم الصريح | [عنوان الدرس/المكونات الحرفي] (الكراسة: ص. [جميع صفحات أنشطة وواجب حصة اليوم فقط] – المدة: [مجموع الدقائق] د)`
-     * "livret_pages": `الكراسة: ص. [نفس صفحات أنشطة وواجب حصة اليوم فقط]` (مع استبعاد صفحات تصحيح واجب الحصة السابقة وكراسة الحساب الذهني دائماً).
+     * "lesson_subtitle": `برنامج التعليم الصريح | [العنوان الحرفي للدرس/المكونات بفواصل سليمة] (الكراسة: ص. [صفحات أنشطة وواجب حصة اليوم فقط مع الربط بـ "و" مثل ص. 47 و53] – المدة: [مجموع الدقائق] د)`
+     * "livret_pages": `الكراسة: ص. [نفس صفحات حصة اليوم بالربط بـ "و" مثل ص. 47 و53]` (دون صفحات تصحيح واجب الحصة السابقة أو الحساب الذهني).
      * "subject_level": `[اسم المادة] – المستوى {lvl or '...'}`.
 
 أرجع JSON صالحاً فقط:
-{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة'}","header_title":"...","lesson_subtitle":"...","objectives":"(عتبة التحكم ≥ 80%): ...","subject_level":"[اسم المادة] – المستوى {lvl or '...'}","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[عنوان المحطة الواضح]","duration":"[المدة الحرفية من الساعة]","bullets":[{{"label":"عنوان فرعي موجز (الدعامة/الصفحة/المدة)","text":"مصدر صريح + تفاصيل حرفية مركزة في 10 إلى 22 كلمة دون زيادة أو نقصان."}}]}}]}}"""
+{{"lang":"ar","ncm_number":"{ncm_num or 'رقم الخطاطة'}","header_title":"...","lesson_subtitle":"...","objectives":"(عتبة التحكم ≥ 80%): ...","subject_level":"[اسم المادة] – المستوى {lvl or '...'}","unit_week":"المرحلة ... – الوحدة ... | الأسبوع ...","seance_ncm_badge":"الحصة ... (خطاطة {ncm_num or '...'})","livret_pages":"الكراسة: ص. ...","stations":[{{"title":"[المكون: العنوان الفرعي]","duration":"[المدة الحرفية من الساعة]","bullets":[{{"label":"عنوان فرعي موجز (الدعامة/الصفحة/المدة)","text":"مصدر صريح + جميع الأمثلة والجمل والمدد الحرفية من الشريحة في 12 إلى 26 كلمة دون بتر أو تحريف."}}]}}]}}"""
 
     parts = [{
         "text": (
             system_prompt
             + duration_hints
-            + "\n\nLesson Slides Content (CRITICAL: 1) Transcribe EXACT clock durations from the plan slide image. 2) ALWAYS decompose each station into 2-3 crisp scannable bullets with parenthetical supports/pages in labels — NEVER collapse a multi-activity station into 1 wall-of-text bullet. 3) NEVER drop the closing/homework/mastery slides: if 'اختتام الحصة' has no separate clock icon, integrate it as the 3rd bullet inside the last station. 4) Preserve ALL concrete examples, rules, sentences, and page/exercise numbers verbatim with ZERO invented details and ZERO spelling distortions):\n"
-            + (text[:55000] if text else "Analyze the attached lesson file thoroughly and produce a structured, multi-bullet, strictly faithful NCM.")
+            + "\n\nLesson Slides Content (STRICT QUALITY MANDATE: 1) Transcribe EXACT clock durations from the plan slide image. 2) Output 3 separate scannable bullets whenever a station has 3 distinct sub-activities — NEVER merge distinct activities. 3) Copy EVERY Arabic word/sentence character-by-character with ZERO letter swaps (e.g. حَطَّ not حَظَّ, يُثابِرَ not يُتابِرَ). 4) Preserve ALL concrete model sentences, model Q&A pairs (using ←), micro-durations (e.g. دقيقة واحدة), behavior rules, and homework pages/questions without inventing anything absent from the slides. 5) Always separate main component and sub-title with a colon ':' and format page pairs cleanly with 'و'):\n"
+            + (text[:55000] if text else "Analyze the attached lesson file thoroughly and produce a publication-grade, verbatim-accurate NCM.")
         )
     }]
     if file_b64 and mime_type:
