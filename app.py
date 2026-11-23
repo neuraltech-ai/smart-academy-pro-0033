@@ -383,13 +383,16 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
             elapsed = time.time() - start_ts
             if elapsed > 50:
                 break
-            req_timeout = max(12, min(25 if high_rigor else 16, int(54 - elapsed)))
+            req_timeout = max(10, min((16 if 'preview' in model_name else (20 if high_rigor else 15)), int(54 - elapsed)))
             headers = {'Content-Type': 'application/json', 'x-goog-api-key': current_key}
 
             req_gen_config = apply_fast_thinking_cfg(model_name, dict(base_gen_config))
             payload = {"contents": [{"parts": parts}], "generationConfig": req_gen_config}
 
             try:
+                if 'gemini-3' in model_name and isinstance(req_gen_config, dict):
+                    req_gen_config['thinkingConfig'] = {'thinkingLevel': 'low'}
+                    payload = {'contents': [{'parts': parts}], 'generationConfig': req_gen_config}
                 res = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
                     json=payload,
@@ -406,6 +409,14 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                         timeout=req_timeout
                     )
 
+                if res.status_code == 503 and elapsed < 38:
+                    time.sleep(1.8)
+                    res = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
+                        json=payload,
+                        headers=headers,
+                        timeout=max(10, req_timeout - 2)
+                    )
                 if res.status_code == 200:
                     res_data = res.json()
                     cands = res_data.get('candidates') or []
@@ -2086,6 +2097,45 @@ HTML_TEMPLATE = r"""
   } else {
     initAutoMeta();
   }
+})();
+</script>
+
+
+<script id="ncm-resilient-fetch">
+(function() {
+  if (window.__resilientFetchPatched) return;
+  window.__resilientFetchPatched = true;
+  const origFetch = window.fetch.bind(window);
+  window.fetch = async function(input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const isAiEndpoint = /\/(generate_ncm|smart_tool)(\?|$)/.test(url);
+    if (!isAiEndpoint) return origFetch(input, init);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await origFetch(input, init);
+        if (attempt === 0) {
+          if (res.status === 502 || res.status === 503 || res.status === 504) {
+            await new Promise(r => setTimeout(r, 2500));
+            continue;
+          }
+          try {
+            const data = await res.clone().json();
+            if (data && data.error && /(503|504|ضغط مؤقت|انتهاء المهلة|overloaded)/i.test(String(data.error))) {
+              await new Promise(r => setTimeout(r, 2500));
+              continue;
+            }
+          } catch (_) {}
+        }
+        return res;
+      } catch (err) {
+        if (attempt === 0) {
+          await new Promise(r => setTimeout(r, 2500));
+          continue;
+        }
+        throw err;
+      }
+    }
+  };
 })();
 </script>
 
