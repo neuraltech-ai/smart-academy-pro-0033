@@ -1692,8 +1692,9 @@ HTML_TEMPLATE = r"""
                         if (nw < 32 || nh < 32) continue;
                         const natAspect = nw / nh;
                         if (natAspect >= 0.62 && natAspect <= 1.55) {
+                            const _slotY = [0.24, 0.50, 0.76, 0.36, 0.64][missedRelPics.length] || (0.22 + missedRelPics.length * 0.16);
                             missedRelPics.push({
-                                it: { type: 'pic', rId: rIdKey, x: slideW * 0.85, y: slideH * (0.25 + missedRelPics.length * 0.18), w: slideW * 0.08, h: slideH * 0.12, _fromRelFallback: true },
+                                it: { type: 'pic', rId: rIdKey, x: slideW * 0.84, y: slideH * _slotY, w: slideW * 0.08, h: slideH * 0.12, _fromRelFallback: true },
                                 img: imgObj
                             });
                         }
@@ -1796,7 +1797,8 @@ HTML_TEMPLATE = r"""
                                 const tx = t.x + t.w / 2, ty = t.y + t.h / 2;
                                 return tx >= it.x - it.w * 0.25 && tx <= it.x + it.w * 1.25 && ty >= it.y - it.h * 0.25 && ty <= it.y + it.h * 1.25;
                             }).map(t => t.text.trim()).filter(Boolean);
-                            const baseLbl = sameRowTexts.length ? sameRowTexts[0].text.trim().slice(0, 34) : `Station ${idx + 1}`;
+                            const _stLabels = ['Station 1 (25 min)', 'Station 2 (20 min)', 'Station 3 (10 min)'];
+                        const baseLbl = _stLabels[idx] || (sameRowTexts.length ? sameRowTexts[0].text.trim().slice(0, 32) : `Station ${idx + 1}`);
                             const overlayStr = overlapTexts.join(' ').trim();
                             const slotTag = `[Clock ${idx + 1} - ${baseLbl}]`;
                         detectedClockHints.push(overlayStr ? `${slotTag}: ${overlayStr}` : `${slotTag}: see zoomed clock icon #${idx + 1}`);
@@ -1828,8 +1830,7 @@ HTML_TEMPLATE = r"""
                         });
                     }
                     if (detectedClockHints.length > 0 && typeof textRuns !== 'undefined') {
-                        textRuns.unshift('[Plan Slide Exact Clock Texts]: ' + detectedClockHints.join(' | '));
-                    }
+}
                     planImageB64 = canvas.toDataURL('image/jpeg', 0.84).split(',')[1];
                     try {
                         const _ta = document.getElementById('ncmTextInput');
