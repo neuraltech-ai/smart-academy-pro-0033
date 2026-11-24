@@ -1520,6 +1520,18 @@ HTML_TEMPLATE = r"""
                             const rect = xf ? applyTf(xf, tf) : { x: 0, y: 0, w: 0, h: 0 };
                             items.push({ type: 'text', text: txt, ...rect });
                         }
+                        const blipFillInSp = Array.from(child.getElementsByTagName('*')).find(el => el.localName === 'blip');
+                        if (blipFillInSp) {
+                            let spRid = null;
+                            for (const attr of Array.from(blipFillInSp.attributes)) {
+                                if (attr.name === 'embed' || attr.name.endsWith(':embed')) { spRid = attr.value; break; }
+                            }
+                            const spPrB = getChildByLocal(child, 'spPr');
+                            const xfB = getXfrm(spPrB);
+                            if (spRid && xfB && xfB.w > 0 && xfB.h > 0) {
+                                items.push({ type: 'pic', rId: spRid, ...applyTf(xfB, tf) });
+                            }
+                        }
                     } else if (ln === 'pic') {
                         const spr = getChildByLocal(child, 'spPr');
                         const xf = getXfrm(spr);
@@ -1536,7 +1548,12 @@ HTML_TEMPLATE = r"""
                             const rect = applyTf(xf, tf);
                             items.push({ type: 'pic', rId, ...rect });
                         }
-                    } else if (ln === 'graphicFrame') {
+                    } else if (ln === 'AlternateContent') {
+                const fb = getChildByLocal(child, 'Fallback');
+                const ch = getChildByLocal(child, 'Choice');
+                if (fb) collectSlideItems(fb, tf, items);
+                else if (ch) collectSlideItems(ch, tf, items);
+            } else if (ln === 'graphicFrame') {
                         const txt = extractParagraphsText(child);
                         if (txt) {
                             const xf = getXfrm(child);
@@ -1586,17 +1603,32 @@ HTML_TEMPLATE = r"""
                 if (combined.trim()) textRuns.push(`[Slide ${i + 1}]: ${combined}`);
 
                 // رصد شريحة "مراحل الدرس / تنظيم الحصة" ضمن أول 6 شرائح
-                if (i < 6) {
+                if (i < 12) {
                     const lower = combined.toLowerCase();
+                    const strongPlanKw = [
+                        'plan de la séance', 'plan de séance', 'étapes de la séance', 'déroulement de la séance',
+                        'هيكلة حصة اليوم', 'هيكلة الحصة', 'هيكلة الدرس', 'تنظيم حصة اليوم', 'تنظيم الحصة',
+                        'مراحل الحصة', 'مراحل حصة اليوم', 'مراحل الدرس', 'محطات الحصة'
+                    ];
                     let score = 0;
-                    for (const kw of planKeywords) {
-                        if (lower.includes(kw)) score += 10;
+                    for (const kw of strongPlanKw) {
+                        if (lower.includes(kw)) score += 40;
                     }
+                    for (const kw of planKeywords) {
+                        if (lower.includes(kw)) score += 8;
+                    }
+                    const isWeeklyOverview =
+                        lower.includes('تنظيم حصص الأسبوع') ||
+                        lower.includes('organisation de la semaine') ||
+                        (lower.includes('séance 1') && lower.includes('séance 2') && lower.includes('séance 3')) ||
+                        (lower.includes('اليوم 1') && lower.includes('اليوم 2') && lower.includes('اليوم 3'));
+                    if (isWeeklyOverview) score -= 35;
+                    const hasNumberedSteps = /(?:^|\|\s*)1\s*[\.\-\)]/.test(combined) && /(?:^|\|\s*)2\s*[\.\-\)]/.test(combined);
                     const picCount = items.filter(it => it.type === 'pic').length;
+                    if (hasNumberedSteps && picCount >= 2) score += 18;
                     if (score > 0 && picCount >= 2) score += 5;
-                    else if (i >= 1 && i <= 3 && picCount >= 3 && textItems.length >= 4) score += 2;
-
-                    if (score > bestPlanScore && picCount > 0) {
+                    else if (!isWeeklyOverview && i >= 1 && i <= 6 && picCount >= 3 && textItems.length >= 4) score += 2;
+                    if (picCount > 0 && (score > bestPlanScore || (score === bestPlanScore && score >= 40))) {
                         bestPlanScore = score;
                         bestPlanSlide = { sNum, items };
                     }
@@ -1647,7 +1679,7 @@ HTML_TEMPLATE = r"""
                         if (!it.w || !it.h) return false;
                         const cy = it.y + it.h / 2;
                         const aspect = it.w / it.h;
-                        return cy >= slideH * 0.15 && aspect >= 0.55 && aspect <= 1.75 && it.w <= slideW * 0.28 && it.h <= slideH * 0.28 && it.w >= slideW * 0.025;
+                        return cy >= slideH * 0.14 && aspect >= 0.50 && aspect <= 2.00 && it.w <= slideW * 0.35 && it.h <= slideH * 0.35 && it.w >= slideW * 0.015;
                     }).sort((a, b) => {
                         const dy = (a.it.y + a.it.h / 2) - (b.it.y + b.it.h / 2);
                         if (Math.abs(dy) > slideH * 0.06) return dy;
