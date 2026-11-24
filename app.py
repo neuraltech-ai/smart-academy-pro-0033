@@ -1622,55 +1622,129 @@ HTML_TEMPLATE = r"""
                         }
                     }
 
-                    const canvasW = 1000;
-                    const canvasH = Math.round(canvasW * (slideH / slideW));
-                    const canvas = document.createElement('canvas');
-                    canvas.width = canvasW;
-                    canvas.height = canvasH;
-                    const ctx = canvas.getContext('2d');
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillRect(0, 0, canvasW, canvasH);
-
+                    const canvasW = 1400;
+                    const slideDrawH = Math.round(canvasW * (slideH / slideW));
                     const sx = canvasW / slideW;
-                    const sy = canvasH / slideH;
-
-                    // 1) رسم جميع الصور المدمجة (خاصة صور الساعات والمدد) في مواقعها الدقيقة
+                    const sy = slideDrawH / slideH;
+                    const loadedPics = [];
+                    const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
                     for (const it of bestPlanSlide.items.filter(x => x.type === 'pic')) {
                         const mPath = relMap[it.rId];
                         if (!mPath || !zip.file(mPath)) continue;
                         const ext = mPath.split('.').pop().toLowerCase();
-                        const mimeMap = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml' };
                         if (!mimeMap[ext]) continue;
                         const b64 = await zip.file(mPath).async('base64');
-                        await new Promise(resolve => {
+                        const imgObj = await new Promise(resolve => {
                             const img = new Image();
-                            img.onload = () => {
-                                ctx.drawImage(img, it.x * sx, it.y * sy, it.w * sx, it.h * sy);
-                                resolve();
-                            };
-                            img.onerror = resolve;
+                            img.onload = () => resolve(img);
+                            img.onerror = () => resolve(null);
                             img.src = `data:${mimeMap[ext]};base64,${b64}`;
                         });
+                        if (imgObj) loadedPics.push({ it, img: imgObj });
                     }
-
-                    // 2) رسم نصوص الشريحة فوق مواقعها الحقيقية بوضوح تام
-                    ctx.textBaseline = 'middle';
-                    for (const it of bestPlanSlide.items.filter(x => x.type === 'text')) {
-                        if (it.w <= 0 || it.h <= 0) continue;
-                        const rx = it.x * sx, ry = it.y * sy, rw = it.w * sx, rh = it.h * sy;
-                        ctx.fillStyle = 'rgba(241, 245, 249, 0.88)';
-                        ctx.fillRect(rx, ry, rw, rh);
-                        ctx.strokeStyle = '#94a3b8';
-                        ctx.lineWidth = 1;
-                        ctx.strokeRect(rx, ry, rw, rh);
-                        const fSize = Math.max(13, Math.min(24, Math.round(rh * 0.45)));
-                        ctx.font = `bold ${fSize}px Cairo, Arial, sans-serif`;
-                        ctx.fillStyle = '#0f172a';
+                    const textItemsPlan = bestPlanSlide.items.filter(x => x.type === 'text' && x.text && x.text.trim());
+                    const zoomCandidates = loadedPics.filter(({ it }) => {
+                        if (!it.w || !it.h) return false;
+                        const cy = it.y + it.h / 2;
+                        const aspect = it.w / it.h;
+                        return cy >= slideH * 0.15 && aspect >= 0.55 && aspect <= 1.75 && it.w <= slideW * 0.28 && it.h <= slideH * 0.28 && it.w >= slideW * 0.025;
+                    }).sort((a, b) => {
+                        const dy = (a.it.y + a.it.h / 2) - (b.it.y + b.it.h / 2);
+                        if (Math.abs(dy) > slideH * 0.06) return dy;
+                        return a.it.x - b.it.x;
+                    }).slice(0, 14);
+                    const colsPerRow = Math.min(7, Math.max(1, zoomCandidates.length));
+                    const zoomRows = zoomCandidates.length ? Math.ceil(zoomCandidates.length / colsPerRow) : 0;
+                    const cellH = 196;
+                    const stripHeaderH = zoomRows ? 42 : 0;
+                    const extraH = zoomRows ? (stripHeaderH + zoomRows * cellH + 14) : 0;
+                    const canvas = document.createElement('canvas');
+                    canvas.width = canvasW;
+                    canvas.height = slideDrawH + extraH;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    for (const { it, img } of loadedPics) {
+                        if (it.w > slideW * 0.28 || it.h > slideH * 0.28) {
+                            ctx.drawImage(img, it.x * sx, it.y * sy, it.w * sx, it.h * sy);
+                        }
+                    }
+                    ctx.fillStyle = '#0f172a';
+                    ctx.textBaseline = 'top';
+                    for (const it of textItemsPlan) {
+                        const px = Math.max(4, it.x * sx);
+                        const py = Math.max(4, it.y * sy);
+                        const pw = Math.max(80, it.w * sx);
+                        const fontSize = Math.max(15, Math.min(26, Math.round((it.h * sy) * 0.42) || 18));
+                        ctx.font = `bold ${fontSize}px sans-serif`;
+                        const txt = it.text.trim();
+                        const isArTxt = /[\u0600-\u06FF]/.test(txt);
+                        ctx.direction = isArTxt ? 'rtl' : 'ltr';
+                        ctx.textAlign = isArTxt ? 'right' : 'left';
+                        const drawX = isArTxt ? Math.min(canvasW - 8, px + pw) : px;
+                        ctx.fillText(txt.slice(0, 110), drawX, py, Math.min(canvasW - 16, pw + 40));
+                    }
+                    for (const { it, img } of loadedPics) {
+                        if (it.w <= slideW * 0.28 && it.h <= slideH * 0.28) {
+                            ctx.drawImage(img, it.x * sx, it.y * sy, it.w * sx, it.h * sy);
+                        }
+                    }
+                    if (zoomCandidates.length > 0) {
+                        const stripY = slideDrawH;
+                        ctx.fillStyle = '#f1f5f9';
+                        ctx.fillRect(0, stripY, canvasW, extraH);
+                        ctx.strokeStyle = '#334155';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(0, stripY);
+                        ctx.lineTo(canvasW, stripY);
+                        ctx.stroke();
+                        ctx.direction = 'ltr';
                         ctx.textAlign = 'center';
-                        ctx.fillText(it.text.slice(0, 70), rx + rw / 2, ry + rh / 2, rw - 8);
+                        ctx.textBaseline = 'middle';
+                        ctx.fillStyle = '#0f172a';
+                        ctx.font = 'bold 19px sans-serif';
+                        ctx.fillText('ZOOMED CLOCKS & STATION ICONS (READ EXACT MINUTES FOR EACH STATION)', canvasW / 2, stripY + 21);
+                        const cellW = Math.floor((canvasW - 24) / colsPerRow);
+                        zoomCandidates.forEach(({ it, img }, idx) => {
+                            const row = Math.floor(idx / colsPerRow);
+                            const col = idx % colsPerRow;
+                            const bx = 12 + col * cellW + 5;
+                            const by = stripY + stripHeaderH + row * cellH + 5;
+                            const bw = cellW - 10;
+                            const bh = cellH - 10;
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(bx, by, bw, bh);
+                            ctx.strokeStyle = '#94a3b8';
+                            ctx.lineWidth = 1.5;
+                            ctx.strokeRect(bx, by, bw, bh);
+                            const cy = it.y + it.h / 2;
+                            const sameRowTexts = textItemsPlan
+                                .filter(t => Math.abs((t.y + t.h / 2) - cy) <= slideH * 0.14)
+                                .sort((a, b) => {
+                                    const aNum = /^\s*\d+[\.\-\)]/.test(a.text) ? 0 : 1;
+                                    const bNum = /^\s*\d+[\.\-\)]/.test(b.text) ? 0 : 1;
+                                    if (aNum !== bNum) return aNum - bNum;
+                                    return Math.abs((a.y + a.h / 2) - cy) - Math.abs((b.y + b.h / 2) - cy);
+                                });
+                            const rowLabel = sameRowTexts.length ? sameRowTexts[0].text.trim().slice(0, 38) : `Station ${idx + 1}`;
+                            const isArLbl = /[\u0600-\u06FF]/.test(rowLabel);
+                            ctx.direction = isArLbl ? 'rtl' : 'ltr';
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'top';
+                            ctx.fillStyle = '#1e293b';
+                            ctx.font = 'bold 14px sans-serif';
+                            ctx.fillText(rowLabel, bx + bw / 2, by + 6, bw - 10);
+                            const maxIcon = 138;
+                            const natW = img.naturalWidth || 100;
+                            const natH = img.naturalHeight || 100;
+                            const scale = Math.min(maxIcon / natW, maxIcon / natH);
+                            const dw = Math.round(natW * scale);
+                            const dh = Math.round(natH * scale);
+                            ctx.drawImage(img, bx + Math.round((bw - dw) / 2), by + 30 + Math.round((maxIcon - dh) / 2), dw, dh);
+                        });
                     }
-
-                    planImageB64 = canvas.toDataURL('image/jpeg', 0.86).split(',')[1];
+                    planImageB64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
                 } catch (renderErr) {
                     console.warn('Plan slide visual render skipped:', renderErr);
                 }
@@ -2325,7 +2399,12 @@ def polish_ncm_output(res_json, is_fr=False):
                     txt = re.sub(r'\(\s*p\.?\s*\((\d+)\)\s*\)?', r'(p. \1)', txt, flags=re.IGNORECASE)
                     txt = re.sub(r'\s{2,}', ' ', txt).strip()
                     lbl = lbl.replace('>=', '≥').replace('<=', '≤').replace('<<', '« ').replace('>>', ' »')
-                    lbl = re.sub(r'\s*&\s*', ' et ', lbl).strip()
+                    lbl = re.sub(r'\s*&\s*', ' et ', lbl)
+                    lbl = re.sub(r'\s*\(\s*Diapositives?\s*\)', '', lbl, flags=re.IGNORECASE).strip()
+                    txt = re.sub(r'\bAnoncer\b', 'Annoncer', txt)
+                    txt = re.sub(r'Annoncer\s+la\s+fin\s+de\s+la\s+séance[^.]*?(?:\s+et\s+|\.\s*)', '', txt, flags=re.IGNORECASE).strip()
+                    if txt:
+                        txt = txt[0].upper() + txt[1:]
                 else:
                     lbl = clean_ar_text(lbl, is_objective=False).rstrip('.')
                     txt = clean_ar_text(txt, is_objective=False)
@@ -2342,6 +2421,7 @@ def polish_ncm_output(res_json, is_fr=False):
         if is_fr:
             obj = obj.replace('>=', '≥').replace('<=', '≤').replace('<<', '« ').replace('>>', ' »')
             obj = re.sub(r'\s*&\s*', ' et ', obj).strip()
+            obj = re.sub(r'\(\s*seuil\s+de\s+maîtrise\s*[=≥>]*\s*(\d+)\s*%?\s*\)', r'(seuil de maîtrise ≥ \1%)', obj, flags=re.IGNORECASE)
             res_json['objectives'] = obj
         else:
             res_json['objectives'] = clean_ar_text(obj, is_objective=True)
@@ -2413,9 +2493,11 @@ def generate_ncm():
     if not ncm_num and fn_meta.get('ncm'):
         ncm_num = fn_meta.get('ncm')
 
-    is_fr = filename.upper().startswith('FR') or (
+    fn_up = filename.upper()
+    is_fr = bool(re.search(r'(?:^|[_\-\s])FR(?:[_\-\s\.]|$)', fn_up)) or (
         text and len(re.findall(r'[a-zA-Zéèêëàâîïôùûç]', text[:2500])) > len(re.findall(r'[\u0600-\u06FF]', text[:2500]))
     )
+    fr_subject = 'Mathématiques' if re.search(r'(?:^|[_\-\s])MATH(?:[_\-\s\.]|$)', fn_up) else ('Français' if re.search(r'(?:^|[_\-\s])FR(?:[_\-\s\.]|$)', fn_up) else 'Français ou Mathématiques')
 
     duration_hints = extract_slide_duration_hints(text)
 
@@ -2434,23 +2516,23 @@ Ta mission : produire une fiche NCM structurée, complète et D'UNE FIDÉLITÉ L
 
 2. TITRES ET DURÉES DES STATIONS — COPIE LITTÉRALE STRICTE :
    - Copie MOT POUR MOT le TITRE PRINCIPAL du bandeau numéroté sur la diapositive « Plan de la séance » (sans le numéro initial ni point final).
-   - Lis avec une rigueur absolue le chiffre exact inscrit dans CHAQUE icône d'horloge (image jointe) ET dans le texte des diapositives. Ne devine JAMAIS une durée.
+   - Lis avec une rigueur absolue le chiffre exact inscrit dans CHAQUE icône d'horloge grâce au bandeau agrandi « ZOOMED CLOCKS & STATION ICONS » en bas de l'image jointe (qui associe chaque grande horloge à son titre exact de station). Ne décale et ne devine JAMAIS une durée.
    - Si la séance se termine par une clôture / devoir à la maison sans icône d'horloge dédiée sur le plan, intègre-la comme dernière puce (« Clôture et devoir ») dans la dernière station.
    - {station_rule}
 
 3. DÉCOMPOSITION EN 2 À 3 PUCES DISTINCTES (NE JAMAIS FUSIONNER DEUX SOUS-ACTIVITÉS DISTINCTES) :
    - Lorsque la station comporte 3 sous-activités distinctes dans les diapositives, rédige **3 puces distinctes** (jamais fusionner deux activités différentes en une seule puce).
    - Longueur de chaque "text" : **12 à 26 mots** pour conserver tous les exemples concrets, micro-durées et numéros d'activités sans tronquer.
-   - Place dans le "label" (2 à 6 mots) le sous-titre opérationnel accompagné du support, de la page ou de la micro-durée entre parenthèses lorsqu'ils figurent dans les diapositives (ex : "Ardoises (5 min)", "Binômes (p. 26)", "Clôture et devoir (p. 27)").
-   - Commence chaque "text" par un verbe à l'INFINITIF en utilisant « ... » pour les citations, « → » pour question/réponse et « • » pour séparer deux phrases modèles. Ne cite pas les numéros internes de diapositives et n'inclus aucune formule d'au revoir.
+   - Place dans le "label" (2 à 6 mots) le sous-titre opérationnel accompagné UNIQUEMENT d'un support concret d'élève, d'une page ou d'une micro-durée entre parenthèses (ex : "Ardoises (5 min)", "Binômes (p. 28)", "Devoir à la maison (p. 28)"). INTERDICTION ABSOLUE d'écrire "(Diapositives)" ou "(Diapositive)" dans un label.
+   - Commence chaque "text" par un verbe à l'INFINITIF. Introduis TOUJOURS les phrases modèles par « : » et sépare-les proprement par « « ... » • « ... » » (jamais coller plusieurs phrases sans ponctuation). INTERDICTION de citer les numéros de diapositives ou d'écrire « Annoncer la fin de la séance » / formules d'au revoir (en clôture, mentionne uniquement le bilan ou le devoir concret).
 
 4. EN-TÊTE ET OBJECTIFS (Métadonnées : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
-   - Dans "lesson_subtitle" et "livret_pages", regroupe toutes les pages du livret propres à la séance du jour et au devoir du jour (jamais les pages de correction des devoirs précédents ni du calcul mental).
+   - MATIÈRE OFFICIELLE : utilise "{fr_subject}" (jamais le nom d'un simple domaine comme "Vocabulaire" ou "Lecture") dans "header_title" et "subject_level". Dans "lesson_subtitle", résume l'ensemble des volets de la séance (ex : "Activités de vocabulaire") et regroupe toutes les pages du livret du jour (jamais les pages de correction précédente).
    - "objectives" : inclut « (seuil de maîtrise ≥ 80%) : » si mentionné dans les diapositives, puis les objectifs exacts sans « + » ni adverbes inventés.
    - Conventions : 100% français ("lang":"fr"), « et » (jamais « & »), « NCM », « « ... » », « ≥ », numéros en chiffres.
 
 Retourne UNIQUEMENT un objet JSON valide :
-{{"lang":"fr","ncm_number":"{ncm_num or 'numéro'}","header_title":"[Matière] – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}","lesson_subtitle":"Enseignement explicite | [Intitulé exact] (Livret : p. ...)","objectives":"(seuil de maîtrise ≥ 80%) : ...","subject_level":"[Matière] – Niveau {lvl or '...'}","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT du bandeau]","duration":"[Durée EXACTE]","bullets":[{{"label":"Sous-étape (support / page)","text":"Verbe à l'infinitif + contenu exact et complet en 12 à 26 mots."}}]}}]}}"""
+{{"lang":"fr","ncm_number":"{ncm_num or 'numéro'}","header_title":"{fr_subject} – Niveau {lvl or '...'} | Période {per or '...'} - Unité {uni or '...'} - Semaine {sem or '...'} - Séance {sea or '...'}","lesson_subtitle":"Enseignement explicite | [Intitulé exact] (Livret : p. ...)","objectives":"(seuil de maîtrise ≥ 80%) : ...","subject_level":"{fr_subject} – Niveau {lvl or '...'}","unit_week":"Période ... - Unité ... | Semaine ...","seance_ncm_badge":"Séance ... (NCM {ncm_num or '...'})","livret_pages":"Livret : p. ...","stations":[{{"title":"[Titre EXACT du bandeau]","duration":"[Durée EXACTE]","bullets":[{{"label":"Sous-étape (support / page)","text":"Verbe à l'infinitif + contenu exact et complet en 12 à 26 mots."}}]}}]}}"""
     else:
         station_rule = (
             f"التزم باستخراج ({stations}) محطات بالضبط كما وردت في شريحة هيكلة/تنظيم الحصة."
@@ -2498,7 +2580,7 @@ Retourne UNIQUEMENT un objet JSON valide :
         "text": (
             system_prompt
             + duration_hints
-            + "\n\nLesson Slides Content (STRICT QUALITY MANDATE: 1) Transcribe EXACT clock durations from the plan slide image. 2) Output 3 separate scannable bullets whenever a station has 3 distinct sub-activities — NEVER merge distinct activities. 3) Copy EVERY Arabic word/sentence character-by-character with ZERO letter swaps (e.g. حَطَّ not حَظَّ, يُثابِرَ not يُتابِرَ). 4) Preserve ALL concrete model sentences, model Q&A pairs (using ←), micro-durations (e.g. دقيقة واحدة), behavior rules, and homework pages/questions without inventing anything absent from the slides. 5) Always separate main component and sub-title with a colon ':' and format page pairs cleanly with 'و'):\n"
+            + "\n\nLesson Slides Content (STRICT QUALITY MANDATE: 1) Read the EXACT clock minutes from the HIGH-ZOOM 'ZOOMED CLOCKS & STATION ICONS' strip at the bottom of the attached plan slide image — NEVER shift or guess minutes. 2) Output 3 separate scannable bullets whenever a station has 3 distinct sub-activities — NEVER merge distinct activities. 3) Copy EVERY Arabic word/sentence character-by-character with ZERO letter swaps (e.g. حَطَّ not حَظَّ, يُثابِرَ not يُتابِرَ). 4) Preserve ALL concrete model sentences, model Q&A pairs (using ←), micro-durations (e.g. دقيقة واحدة), behavior rules, and homework pages/questions without inventing anything absent from the slides. 5) Always separate main component and sub-title with a colon ':' and format page pairs cleanly with 'و'):\n"
             + (text[:55000] if text else "Analyze the attached lesson file thoroughly and produce a publication-grade, verbatim-accurate NCM.")
         )
     }]
