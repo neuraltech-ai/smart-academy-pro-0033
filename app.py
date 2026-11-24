@@ -1665,6 +1665,31 @@ HTML_TEMPLATE = r"""
                         });
                         if (imgObj) loadedPics.push({ it, img: imgObj });
                     }
+                    const loadedMediaPaths = new Set(loadedPics.map(p => relMap[p.it.rId]).filter(Boolean));
+                    const missedRelPics = [];
+                    for (const [rIdKey, mPath] of Object.entries(relMap)) {
+                        if (!mPath || loadedMediaPaths.has(mPath) || !zip.file(mPath)) continue;
+                        const ext = mPath.split('.').pop().toLowerCase();
+                        if (!mimeMap[ext]) continue;
+                        const b64 = await zip.file(mPath).async('base64');
+                        const imgObj = await new Promise(resolve => {
+                            const img = new Image();
+                            img.onload = () => resolve(img);
+                            img.onerror = () => resolve(null);
+                            img.src = `data:${mimeMap[ext]};base64,${b64}`;
+                        });
+                        if (!imgObj) continue;
+                        const nw = imgObj.naturalWidth || 0;
+                        const nh = imgObj.naturalHeight || 0;
+                        if (nw < 32 || nh < 32) continue;
+                        const natAspect = nw / nh;
+                        if (natAspect >= 0.62 && natAspect <= 1.55) {
+                            missedRelPics.push({
+                                it: { type: 'pic', rId: rIdKey, x: slideW * 0.85, y: slideH * (0.25 + missedRelPics.length * 0.18), w: slideW * 0.08, h: slideH * 0.12, _fromRelFallback: true },
+                                img: imgObj
+                            });
+                        }
+                    }
                     const textItemsPlan = bestPlanSlide.items.filter(x => x.type === 'text' && x.text && x.text.trim());
                     const zoomCandidates = loadedPics.filter(({ it }) => {
                         if (!it.w || !it.h) return false;
@@ -1675,7 +1700,11 @@ HTML_TEMPLATE = r"""
                         const dy = (a.it.y + a.it.h / 2) - (b.it.y + b.it.h / 2);
                         if (Math.abs(dy) > slideH * 0.06) return dy;
                         return a.it.x - b.it.x;
-                    }).slice(0, 10);
+                    });
+                    if (missedRelPics.length > 0) {
+                        for (const mp of missedRelPics) zoomCandidates.push(mp);
+                    }
+                    zoomCandidates.splice(10);
                     const colsPerRow = Math.min(5, Math.max(1, zoomCandidates.length));
                     const zoomRows = zoomCandidates.length ? Math.ceil(zoomCandidates.length / colsPerRow) : 0;
                     const cellH = 176;
