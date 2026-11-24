@@ -312,35 +312,59 @@ def discover_live_models(keys, high_rigor=False):
             continue
 
     if not found:
-        return ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.1-flash-lite", "gemini-3-flash-preview"]
+        return [
+            "gemini-flash-latest",
+            "gemini-3-flash-preview",
+            "gemini-flash-lite-latest",
+            "gemini-3.1-flash-lite",
+            "gemini-pro-latest",
+            "gemini-2.5-pro",
+        ]
 
-    # للخطاطات (high_rigor) نقدم النماذج الأقوى بصرياً لقراءة الساعات بدقة، ثم Flash-Lite كبديل فوري عند 503
+    skip_tokens = ("tts", "image", "audio", "embed", "veo", "imagen", "robotics", "computer", "deep-research", "live", "aqa", "learnlm")
+    clean_found = [
+        m for m in found
+        if m.lower() != "gemini-2.5-flash" and not any(tok in m.lower() for tok in skip_tokens)
+    ]
+    if not clean_found:
+        clean_found = found
+
+    # للخطاطات (high_rigor) نقدم النماذج الأقوى بصرياً ثم Flash-Lite ثم Pro كبديل طوارئ عند 503
     if high_rigor:
         priority_order = [
             "gemini-flash-latest",
             "gemini-3-flash-preview",
-            "gemini-2.5-flash",
             "gemini-flash-lite-latest",
             "gemini-3.1-flash-lite",
+            "gemini-3.1-flash-lite-preview",
             "gemini-2.5-flash-lite",
+            "gemini-pro-latest",
+            "gemini-2.5-pro",
+            "gemini-3-pro-preview",
         ]
     else:
         priority_order = [
             "gemini-flash-lite-latest",
             "gemini-3.1-flash-lite",
+            "gemini-3.1-flash-lite-preview",
             "gemini-flash-latest",
             "gemini-3-flash-preview",
             "gemini-2.5-flash-lite",
-            "gemini-2.5-flash",
+            "gemini-pro-latest",
+            "gemini-2.5-pro",
         ]
-    ordered = [m for m in priority_order if m in found]
-    for m in found:
+
+    ordered = [m for m in priority_order if m in clean_found]
+    for m in clean_found:
         if "lite" in m.lower() and m not in ordered:
             ordered.append(m)
-    for m in found:
+    for m in clean_found:
         if "flash" in m.lower() and m not in ordered:
             ordered.append(m)
-    return ordered[:6]
+    for m in clean_found:
+        if "pro" in m.lower() and m not in ordered:
+            ordered.append(m)
+    return ordered[:8]
 
 def apply_fast_thinking_cfg(model_name, cfg):
     low = model_name.lower()
@@ -390,9 +414,6 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
             payload = {"contents": [{"parts": parts}], "generationConfig": req_gen_config}
 
             try:
-                if 'gemini-3' in model_name and isinstance(req_gen_config, dict):
-                    req_gen_config['thinkingConfig'] = {'thinkingLevel': 'low'}
-                    payload = {'contents': [{'parts': parts}], 'generationConfig': req_gen_config}
                 res = requests.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
                     json=payload,
@@ -409,8 +430,8 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                         timeout=req_timeout
                     )
 
-                if res.status_code == 503 and elapsed < 38:
-                    time.sleep(1.8)
+                if res.status_code == 503 and elapsed < 24:
+                    time.sleep(1.0)
                     res = requests.post(
                         f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
                         json=payload,
@@ -474,7 +495,7 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
             model_errors.append(f"{model_name}: {model_last_err}")
 
     if model_errors:
-        return None, " | ".join(model_errors[:4])
+        return None, " | ".join(model_errors[:8])
     return None, "تشهد خوادم Google ضغطاً مؤقتاً، يرجى المحاولة بعد دقيقة."
 
 HTML_TEMPLATE = r"""
