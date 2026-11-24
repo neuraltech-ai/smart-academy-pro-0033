@@ -1645,7 +1645,7 @@ HTML_TEMPLATE = r"""
                         }
                     }
 
-                    const canvasW = 1100;
+                    const canvasW = 1150;
                     const slideDrawH = Math.round(canvasW * (slideH / slideW));
                     const sx = canvasW / slideW;
                     const sy = slideDrawH / slideH;
@@ -1676,42 +1676,47 @@ HTML_TEMPLATE = r"""
                         if (Math.abs(dy) > slideH * 0.06) return dy;
                         return a.it.x - b.it.x;
                     }).slice(0, 10);
-                    const colsPerRow = Math.min(7, Math.max(1, zoomCandidates.length));
+                    const colsPerRow = Math.min(5, Math.max(1, zoomCandidates.length));
                     const zoomRows = zoomCandidates.length ? Math.ceil(zoomCandidates.length / colsPerRow) : 0;
-                    const cellH = 166;
-                    const stripHeaderH = zoomRows ? 42 : 0;
-                    const extraH = zoomRows ? (stripHeaderH + zoomRows * cellH + 14) : 0;
+                    const cellH = 176;
+                    const stripHeaderH = zoomRows ? 40 : 0;
+                    const extraH = zoomRows ? (stripHeaderH + zoomRows * cellH + 12) : 0;
                     const canvas = document.createElement('canvas');
                     canvas.width = canvasW;
                     canvas.height = slideDrawH + extraH;
                     const ctx = canvas.getContext('2d');
                     ctx.fillStyle = '#ffffff';
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    // 1) رسم الصور الكبيرة أولاً ثم الصور الصغيرة (الأيقونات والساعات)
                     for (const { it, img } of loadedPics) {
                         if (it.w > slideW * 0.28 || it.h > slideH * 0.28) {
                             ctx.drawImage(img, it.x * sx, it.y * sy, it.w * sx, it.h * sy);
                         }
-                    }
-                    ctx.fillStyle = '#0f172a';
-                    ctx.textBaseline = 'top';
-                    for (const it of textItemsPlan) {
-                        const px = Math.max(4, it.x * sx);
-                        const py = Math.max(4, it.y * sy);
-                        const pw = Math.max(80, it.w * sx);
-                        const fontSize = Math.max(15, Math.min(26, Math.round((it.h * sy) * 0.42) || 18));
-                        ctx.font = `bold ${fontSize}px sans-serif`;
-                        const txt = it.text.trim();
-                        const isArTxt = /[\u0600-\u06FF]/.test(txt);
-                        ctx.direction = isArTxt ? 'rtl' : 'ltr';
-                        ctx.textAlign = isArTxt ? 'right' : 'left';
-                        const drawX = isArTxt ? Math.min(canvasW - 8, px + pw) : px;
-                        ctx.fillText(txt.slice(0, 110), drawX, py, Math.min(canvasW - 16, pw + 40));
                     }
                     for (const { it, img } of loadedPics) {
                         if (it.w <= slideW * 0.28 && it.h <= slideH * 0.28) {
                             ctx.drawImage(img, it.x * sx, it.y * sy, it.w * sx, it.h * sy);
                         }
                     }
+                    // 2) رسم جميع النصوص فوق الصور لضمان عدم تغطية أرقام الساعات المتراكبة أبداً
+                    ctx.fillStyle = '#0f172a';
+                    ctx.textBaseline = 'top';
+                    for (const it of textItemsPlan) {
+                        const px = Math.max(4, it.x * sx);
+                        const py = Math.max(4, it.y * sy);
+                        const pw = Math.max(40, it.w * sx);
+                        const txt = it.text.trim();
+                        const isShortNum = /^\d{1,3}(?:\s*(?:min|mn|د))?$/i.test(txt);
+                        const fontSize = isShortNum ? Math.max(18, Math.min(30, Math.round((it.h * sy) * 0.6) || 22)) : Math.max(14, Math.min(24, Math.round((it.h * sy) * 0.42) || 17));
+                        ctx.font = `bold ${fontSize}px sans-serif`;
+                        const isArTxt = /[\u0600-\u06FF]/.test(txt);
+                        ctx.direction = isArTxt ? 'rtl' : 'ltr';
+                        ctx.textAlign = isShortNum ? 'center' : (isArTxt ? 'right' : 'left');
+                        const drawX = isShortNum ? (px + pw / 2) : (isArTxt ? Math.min(canvasW - 8, px + pw) : px);
+                        ctx.fillText(txt.slice(0, 110), drawX, py, Math.min(canvasW - 16, pw + 40));
+                    }
+                    // 3) شريط التكبير الفائق للساعات مع رصد أي نص متراكب فوق كل أيقونة
+                    const detectedClockHints = [];
                     if (zoomCandidates.length > 0) {
                         const stripY = slideDrawH;
                         ctx.fillStyle = '#f1f5f9';
@@ -1726,8 +1731,8 @@ HTML_TEMPLATE = r"""
                         ctx.textAlign = 'center';
                         ctx.textBaseline = 'middle';
                         ctx.fillStyle = '#0f172a';
-                        ctx.font = 'bold 19px sans-serif';
-                        ctx.fillText('ZOOMED CLOCKS & STATION ICONS (READ EXACT MINUTES FOR EACH STATION)', canvasW / 2, stripY + 21);
+                        ctx.font = 'bold 17px sans-serif';
+                        ctx.fillText('ZOOMED CLOCKS & STATION ICONS (READ EXACT MINUTES FOR EACH STATION)', canvasW / 2, stripY + 20);
                         const cellW = Math.floor((canvasW - 24) / colsPerRow);
                         zoomCandidates.forEach(({ it, img }, idx) => {
                             const row = Math.floor(idx / colsPerRow);
@@ -1743,31 +1748,65 @@ HTML_TEMPLATE = r"""
                             ctx.strokeRect(bx, by, bw, bh);
                             const cy = it.y + it.h / 2;
                             const sameRowTexts = textItemsPlan
-                                .filter(t => Math.abs((t.y + t.h / 2) - cy) <= slideH * 0.14)
+                                .filter(t => Math.abs((t.y + t.h / 2) - cy) <= slideH * 0.14 && !/^\d{1,3}(?:\s*(?:min|mn|د))?$/i.test(t.text.trim()))
                                 .sort((a, b) => {
                                     const aNum = /^\s*\d+[\.\-\)]/.test(a.text) ? 0 : 1;
                                     const bNum = /^\s*\d+[\.\-\)]/.test(b.text) ? 0 : 1;
                                     if (aNum !== bNum) return aNum - bNum;
                                     return Math.abs((a.y + a.h / 2) - cy) - Math.abs((b.y + b.h / 2) - cy);
                                 });
-                            const rowLabel = sameRowTexts.length ? sameRowTexts[0].text.trim().slice(0, 38) : `Station ${idx + 1}`;
+                            const overlapTexts = textItemsPlan.filter(t => {
+                                const tx = t.x + t.w / 2, ty = t.y + t.h / 2;
+                                return tx >= it.x - it.w * 0.25 && tx <= it.x + it.w * 1.25 && ty >= it.y - it.h * 0.25 && ty <= it.y + it.h * 1.25;
+                            }).map(t => t.text.trim()).filter(Boolean);
+                            const baseLbl = sameRowTexts.length ? sameRowTexts[0].text.trim().slice(0, 34) : `Station ${idx + 1}`;
+                            const overlayStr = overlapTexts.join(' ').trim();
+                            if (overlayStr) detectedClockHints.push(`${baseLbl} => ${overlayStr}`);
+                            const rowLabel = overlayStr ? `${baseLbl} [${overlayStr}]` : baseLbl;
                             const isArLbl = /[\u0600-\u06FF]/.test(rowLabel);
                             ctx.direction = isArLbl ? 'rtl' : 'ltr';
                             ctx.textAlign = 'center';
                             ctx.textBaseline = 'top';
                             ctx.fillStyle = '#1e293b';
-                            ctx.font = 'bold 14px sans-serif';
+                            ctx.font = 'bold 13px sans-serif';
                             ctx.fillText(rowLabel, bx + bw / 2, by + 6, bw - 10);
-                            const maxIcon = 112;
+                            const maxIcon = 122;
                             const natW = img.naturalWidth || 100;
                             const natH = img.naturalHeight || 100;
                             const scale = Math.min(maxIcon / natW, maxIcon / natH);
                             const dw = Math.round(natW * scale);
                             const dh = Math.round(natH * scale);
-                            ctx.drawImage(img, bx + Math.round((bw - dw) / 2), by + 30 + Math.round((maxIcon - dh) / 2), dw, dh);
+                            const drawIx = bx + Math.round((bw - dw) / 2);
+                            const drawIy = by + 28 + Math.round((maxIcon - dh) / 2);
+                            ctx.drawImage(img, drawIx, drawIy, dw, dh);
+                            if (overlayStr) {
+                                ctx.direction = 'ltr';
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'middle';
+                                ctx.fillStyle = '#b91c1c';
+                                ctx.font = 'bold 26px sans-serif';
+                                ctx.fillText(overlayStr, drawIx + dw / 2, drawIy + dh / 2, dw);
+                            }
                         });
                     }
-                    planImageB64 = canvas.toDataURL('image/jpeg', 0.80).split(',')[1];
+                    if (detectedClockHints.length > 0 && typeof textRuns !== 'undefined') {
+                        textRuns.unshift('[Plan Slide Exact Clock Texts]: ' + detectedClockHints.join(' | '));
+                    }
+                    planImageB64 = canvas.toDataURL('image/jpeg', 0.84).split(',')[1];
+                    try {
+                        const _ta = document.getElementById('ncmTextInput');
+                        if (_ta && _ta.parentNode && planImageB64) {
+                            let _box = document.getElementById('planSlideDebugPreview');
+                            if (!_box) {
+                                _box = document.createElement('div');
+                                _box.id = 'planSlideDebugPreview';
+                                _box.className = 'print:hidden my-2 p-2 rounded-lg bg-slate-800/70 border border-slate-700 text-xs text-slate-300';
+                                _ta.parentNode.insertBefore(_box, _ta);
+                            }
+                            const _fullUrl = planImageB64.startsWith('data:') ? planImageB64 : ('data:image/jpeg;base64,' + planImageB64);
+                            _box.innerHTML = `<details><summary class="cursor-pointer font-bold text-emerald-400">⏱️ تم التقاط شريحة التوقيت (الشريحة ${bestPlanSlide.sNum}) — ${zoomCandidates.length} أيقونة مكبّرة (اضغط للمعاينة)</summary><img src="${_fullUrl}" class="mt-2 w-full rounded border border-slate-600" /></details>`;
+                        }
+                    } catch (_) {}
                 } catch (renderErr) {
                     console.warn('Plan slide visual render skipped:', renderErr);
                 }
@@ -2425,6 +2464,13 @@ def polish_ncm_output(res_json, is_fr=False):
                     lbl = re.sub(r'\s*&\s*', ' et ', lbl)
                     lbl = re.sub(r'\s*\(\s*Diapositives?\s*\)', '', lbl, flags=re.IGNORECASE).strip()
                     txt = re.sub(r'\bAnoncer\b', 'Annoncer', txt)
+                    txt = re.sub(r'<{2,}', '« ', txt)
+                    txt = re.sub(r'>{2,}', ' »', txt)
+                    txt = re.sub(r'«(?:\s*«)+', '«', txt)
+                    txt = re.sub(r'»(?:\s*»)+', '»', txt)
+                    txt = re.sub(r'«\s*', '« ', txt)
+                    txt = re.sub(r'\s*»', ' »', txt)
+                    txt = re.sub(r'»\s+(?=«)', '» • ', txt)
                     txt = re.sub(r'Annoncer\s+la\s+fin\s+de\s+la\s+séance[^.]*?(?:\s+et\s+|\.\s*)', '', txt, flags=re.IGNORECASE).strip()
                     if txt:
                         txt = txt[0].upper() + txt[1:]
@@ -2538,7 +2584,7 @@ Ta mission : produire une fiche NCM structurée, complète et D'UNE FIDÉLITÉ L
    - INTERDICTION ABSOLUE d'inventer une information absente des diapositives ou d'omettre une activité, phrase exemple ou consigne clé présente dans les diapositives.
 
 2. TITRES ET DURÉES DES STATIONS — COPIE LITTÉRALE STRICTE :
-   - Copie MOT POUR MOT le TITRE PRINCIPAL du bandeau numéroté sur la diapositive « Plan de la séance » (sans le numéro initial ni point final).
+   - Copie MOT POUR MOT le TITRE PRINCIPAL du bandeau numéroté sur la diapositive « Plan de la séance » (ex : Activité 1, Activité 2, Activités de vocabulaire sur livret — sans le numéro initial ni point final, et sans le remplacer par ses sous-puces).
    - Lis avec une rigueur absolue le chiffre exact inscrit dans CHAQUE icône d'horloge grâce au bandeau agrandi « ZOOMED CLOCKS & STATION ICONS » en bas de l'image jointe (qui associe chaque grande horloge à son titre exact de station). Ne décale et ne devine JAMAIS une durée.
    - Si la séance se termine par une clôture / devoir à la maison sans icône d'horloge dédiée sur le plan, intègre-la comme dernière puce (« Clôture et devoir ») dans la dernière station.
    - {station_rule}
@@ -2547,7 +2593,7 @@ Ta mission : produire une fiche NCM structurée, complète et D'UNE FIDÉLITÉ L
    - Lorsque la station comporte 3 sous-activités distinctes dans les diapositives, rédige **3 puces distinctes** (jamais fusionner deux activités différentes en une seule puce).
    - Longueur de chaque "text" : **12 à 26 mots** pour conserver tous les exemples concrets, micro-durées et numéros d'activités sans tronquer.
    - Place dans le "label" (2 à 6 mots) le sous-titre opérationnel accompagné UNIQUEMENT d'un support concret d'élève, d'une page ou d'une micro-durée entre parenthèses (ex : "Ardoises (5 min)", "Binômes (p. 28)", "Devoir à la maison (p. 28)"). INTERDICTION ABSOLUE d'écrire "(Diapositives)" ou "(Diapositive)" dans un label.
-   - Commence chaque "text" par un verbe à l'INFINITIF. Introduis TOUJOURS les phrases modèles par « : » et sépare-les proprement par « « ... » • « ... » » (jamais coller plusieurs phrases sans ponctuation). INTERDICTION de citer les numéros de diapositives ou d'écrire « Annoncer la fin de la séance » / formules d'au revoir (en clôture, mentionne uniquement le bilan ou le devoir concret).
+   - Commence chaque "text" par un verbe à l'INFINITIF. Introduis TOUJOURS les phrases modèles par « : » et sépare-les par un point médian entre guillemets simples (ex : « Phrase 1 » • « Phrase 2 ») sans JAMAIS doubler les guillemets ni écrire << ou >>. INTERDICTION de citer les numéros de diapositives ou d'écrire « Annoncer la fin de la séance » / formules d'au revoir (la puce « Clôture et devoir » doit mentionner UNIQUEMENT le devoir à la maison ou la synthèse finale — jamais la circulation de l'enseignant entre les rangs pendant le travail en binômes).
 
 4. EN-TÊTE ET OBJECTIFS (Métadonnées : Niveau={lvl}, Période={per}, Unité={uni}, Semaine={sem}, Séance={sea}) :
    - MATIÈRE OFFICIELLE : utilise "{fr_subject}" (jamais le nom d'un simple domaine comme "Vocabulaire" ou "Lecture") dans "header_title" et "subject_level". Dans "lesson_subtitle", résume l'ensemble des volets de la séance (ex : "Activités de vocabulaire") et regroupe toutes les pages du livret du jour (jamais les pages de correction précédente).
