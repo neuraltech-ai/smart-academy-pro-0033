@@ -369,6 +369,14 @@ def apply_fast_thinking_cfg(model_name, cfg):
 
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
     keys = [k.strip() for k in re.split(r'[\s,;]+', str(api_key or '')) if k.strip()]
+    or_deadline = time.time() + 54
+    env_or_raw = ' '.join([
+        os.environ.get('OPENROUTER_API_KEY', ''),
+        os.environ.get('OPENROUTER_KEY', ''),
+        os.environ.get('OPEN_ROUTER_API_KEY', '')
+    ])
+    env_or = [k.strip() for k in re.split(r'[\s,;]+', env_or_raw) if k.strip()]
+    or_keys = [k for k in env_or if k.startswith('sk-or-')]
     if not keys:
         return None, "لا يوجد مفتاح API متاح"
 
@@ -2577,7 +2585,7 @@ def generate_ncm():
     overrides = data.get('meta_overrides') or {}
     file_b64 = data.get('file_b64')
     mime_type = data.get('mime_type')
-    api_key = get_configured_api_keys(data.get('api_key'))
+    api_key = ','.join([x for x in [str(data.get('api_key') or '').strip(), str(get_configured_api_keys(data.get('api_key')) or '').strip(), os.environ.get('OPENROUTER_API_KEY', '').strip(), os.environ.get('OPENROUTER_KEY', '').strip(), os.environ.get('OPEN_ROUTER_API_KEY', '').strip()] if x])
 
     if not api_key:
         return jsonify({'error': 'يرجى إدخال مفتاح API (بالنقر 5 مرات على شعار القبعة 🎓 أعلى اليمين).', 'need_key': True})
@@ -2708,7 +2716,7 @@ def smart_tool():
     options = data.get('options') or {}
     file_b64 = data.get('file_b64')
     mime_type = data.get('mime_type')
-    api_key = get_configured_api_keys(data.get('api_key'))
+    api_key = ','.join([x for x in [str(data.get('api_key') or '').strip(), str(get_configured_api_keys(data.get('api_key')) or '').strip(), os.environ.get('OPENROUTER_API_KEY', '').strip(), os.environ.get('OPENROUTER_KEY', '').strip(), os.environ.get('OPEN_ROUTER_API_KEY', '').strip()] if x])
     if not api_key:
         return jsonify({'error': 'يرجى إدخال مفتاح API (بالنقر 5 مرات على شعار القبعة 🎓 أعلى اليمين).', 'need_key': True})
 
