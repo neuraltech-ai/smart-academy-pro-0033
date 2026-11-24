@@ -314,44 +314,38 @@ def discover_live_models(keys, high_rigor=False):
     if not found:
         return [
             "gemini-flash-latest",
-            "gemini-3-flash-preview",
             "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
             "gemini-3.1-flash-lite",
-            "gemini-pro-latest",
-            "gemini-2.5-pro",
+            "gemini-3.1-flash-lite-preview",
         ]
 
-    skip_tokens = ("tts", "image", "audio", "embed", "veo", "imagen", "robotics", "computer", "deep-research", "live", "aqa", "learnlm")
+    skip_tokens = (
+        "2.5", "pro", "tts", "image", "audio", "embed",
+        "veo", "imagen", "robotics", "computer", "deep-research", "live", "aqa", "learnlm"
+    )
     clean_found = [
         m for m in found
-        if m.lower() != "gemini-2.5-flash" and not any(tok in m.lower() for tok in skip_tokens)
+        if not any(tok in m.lower() for tok in skip_tokens)
     ]
     if not clean_found:
-        clean_found = found
+        clean_found = [m for m in found if "2.5" not in m.lower()]
 
-    # للخطاطات (high_rigor) نقدم النماذج الأقوى بصرياً ثم Flash-Lite ثم Pro كبديل طوارئ عند 503
     if high_rigor:
         priority_order = [
             "gemini-flash-latest",
-            "gemini-3-flash-preview",
             "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
             "gemini-3.1-flash-lite",
             "gemini-3.1-flash-lite-preview",
-            "gemini-2.5-flash-lite",
-            "gemini-pro-latest",
-            "gemini-2.5-pro",
-            "gemini-3-pro-preview",
         ]
     else:
         priority_order = [
             "gemini-flash-lite-latest",
+            "gemini-flash-latest",
             "gemini-3.1-flash-lite",
             "gemini-3.1-flash-lite-preview",
-            "gemini-flash-latest",
             "gemini-3-flash-preview",
-            "gemini-2.5-flash-lite",
-            "gemini-pro-latest",
-            "gemini-2.5-pro",
         ]
 
     ordered = [m for m in priority_order if m in clean_found]
@@ -361,10 +355,7 @@ def discover_live_models(keys, high_rigor=False):
     for m in clean_found:
         if "flash" in m.lower() and m not in ordered:
             ordered.append(m)
-    for m in clean_found:
-        if "pro" in m.lower() and m not in ordered:
-            ordered.append(m)
-    return ordered[:8]
+    return ordered[:6]
 
 def apply_fast_thinking_cfg(model_name, cfg):
     low = model_name.lower()
@@ -407,7 +398,7 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
             elapsed = time.time() - start_ts
             if elapsed > 50:
                 break
-            req_timeout = max(10, min((16 if 'preview' in model_name else (20 if high_rigor else 15)), int(54 - elapsed)))
+            req_timeout = max(12, min((22 if 'preview' in model_name else (32 if high_rigor else 22)), int(54 - elapsed)))
             headers = {'Content-Type': 'application/json', 'x-goog-api-key': current_key}
 
             req_gen_config = apply_fast_thinking_cfg(model_name, dict(base_gen_config))
@@ -430,8 +421,8 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
                         timeout=req_timeout
                     )
 
-                if res.status_code == 503 and elapsed < 24:
-                    time.sleep(1.0)
+                if res.status_code == 503 and elapsed < 18 and 'preview' not in model_name:
+                    time.sleep(0.8)
                     res = requests.post(
                         f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
                         json=payload,
@@ -1654,7 +1645,7 @@ HTML_TEMPLATE = r"""
                         }
                     }
 
-                    const canvasW = 1400;
+                    const canvasW = 1100;
                     const slideDrawH = Math.round(canvasW * (slideH / slideW));
                     const sx = canvasW / slideW;
                     const sy = slideDrawH / slideH;
@@ -1684,10 +1675,10 @@ HTML_TEMPLATE = r"""
                         const dy = (a.it.y + a.it.h / 2) - (b.it.y + b.it.h / 2);
                         if (Math.abs(dy) > slideH * 0.06) return dy;
                         return a.it.x - b.it.x;
-                    }).slice(0, 14);
+                    }).slice(0, 10);
                     const colsPerRow = Math.min(7, Math.max(1, zoomCandidates.length));
                     const zoomRows = zoomCandidates.length ? Math.ceil(zoomCandidates.length / colsPerRow) : 0;
-                    const cellH = 196;
+                    const cellH = 166;
                     const stripHeaderH = zoomRows ? 42 : 0;
                     const extraH = zoomRows ? (stripHeaderH + zoomRows * cellH + 14) : 0;
                     const canvas = document.createElement('canvas');
@@ -1767,7 +1758,7 @@ HTML_TEMPLATE = r"""
                             ctx.fillStyle = '#1e293b';
                             ctx.font = 'bold 14px sans-serif';
                             ctx.fillText(rowLabel, bx + bw / 2, by + 6, bw - 10);
-                            const maxIcon = 138;
+                            const maxIcon = 112;
                             const natW = img.naturalWidth || 100;
                             const natH = img.naturalHeight || 100;
                             const scale = Math.min(maxIcon / natW, maxIcon / natH);
@@ -1776,7 +1767,7 @@ HTML_TEMPLATE = r"""
                             ctx.drawImage(img, bx + Math.round((bw - dw) / 2), by + 30 + Math.round((maxIcon - dh) / 2), dw, dh);
                         });
                     }
-                    planImageB64 = canvas.toDataURL('image/jpeg', 0.92).split(',')[1];
+                    planImageB64 = canvas.toDataURL('image/jpeg', 0.80).split(',')[1];
                 } catch (renderErr) {
                     console.warn('Plan slide visual render skipped:', renderErr);
                 }
