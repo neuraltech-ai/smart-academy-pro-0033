@@ -1798,7 +1798,8 @@ HTML_TEMPLATE = r"""
                             }).map(t => t.text.trim()).filter(Boolean);
                             const baseLbl = sameRowTexts.length ? sameRowTexts[0].text.trim().slice(0, 34) : `Station ${idx + 1}`;
                             const overlayStr = overlapTexts.join(' ').trim();
-                            if (overlayStr) detectedClockHints.push(`${baseLbl} => ${overlayStr}`);
+                            const slotTag = `[Clock ${idx + 1} - ${baseLbl}]`;
+                        detectedClockHints.push(overlayStr ? `${slotTag}: ${overlayStr}` : `${slotTag}: see zoomed clock icon #${idx + 1}`);
                             const rowLabel = overlayStr ? `${baseLbl} [${overlayStr}]` : baseLbl;
                             const isArLbl = /[\u0600-\u06FF]/.test(rowLabel);
                             ctx.direction = isArLbl ? 'rtl' : 'ltr';
@@ -2573,6 +2574,34 @@ def polish_ncm_output(res_json, is_fr=False):
             lp = fix_arabic_bidi(lp)
             res_json['livret_pages'] = RLI + lp + RLM + PDI
 
+    def _clean_fr_str(s):
+        if not isinstance(s, str):
+            return s
+        s = re.sub(r'<{2,}', '« ', s)
+        s = re.sub(r'>{2,}', ' »', s)
+        s = re.sub(r'«(?:\s*«)+', '«', s)
+        s = re.sub(r'»(?:\s*»)+', '»', s)
+        s = re.sub(r'«\s+', '« ', s)
+        s = re.sub(r'\s+»', ' »', s)
+        s = re.sub(r'»\s+(?=«)', '» • ', s)
+        s = re.sub(r'\bAnoncer\b', 'Annoncer', s)
+        s = re.sub(
+            r'(?:Conclure la séance[^.]*|Annoncer la fin de la séance[^.]*|Rappeler que le travail[^.]*est terminé[^.]*)',
+            'Rappeler les consignes de révision et de réalisation des activités à la maison',
+            s,
+            flags=re.IGNORECASE
+        )
+        return re.sub(r'\s{2,}', ' ', s).strip()
+
+    def _walk_clean(obj):
+        if isinstance(obj, str):
+            return _clean_fr_str(obj)
+        if isinstance(obj, list):
+            return [_walk_clean(x) for x in obj]
+        if isinstance(obj, dict):
+            return {k: _walk_clean(v) for k, v in obj.items()}
+        return obj
+    res_json = _walk_clean(res_json)
     return res_json
 
 @app.route('/generate_ncm', methods=['POST'])
@@ -2622,7 +2651,7 @@ Ta mission : produire une fiche NCM structurée, complète et D'UNE FIDÉLITÉ L
 
 2. TITRES ET DURÉES DES STATIONS — COPIE LITTÉRALE STRICTE :
    - Copie MOT POUR MOT le TITRE PRINCIPAL du bandeau numéroté sur la diapositive « Plan de la séance » (ex : Activité 1, Activité 2, Activités de vocabulaire sur livret — sans le numéro initial ni point final, et sans le remplacer par ses sous-puces).
-   - Lis avec une rigueur absolue le chiffre exact inscrit dans CHAQUE icône d'horloge grâce au bandeau agrandi « ZOOMED CLOCKS & STATION ICONS » en bas de l'image jointe (qui associe chaque grande horloge à son titre exact de station). Ne décale et ne devine JAMAIS une durée.
+   - Associe CHAQUE icône d'horloge (de haut en bas sur la diapositive et dans le bandeau « ZOOMED CLOCKS & STATION ICONS ») à la station correspondante de même rang (1re horloge -> 1re station, 2e horloge -> 2e station, 3e horloge -> 3e station). N'applique JAMAIS un décalage d'une station à l'autre et vérifie que la somme des durées correspond exactement aux horloges.
    - Si la séance se termine par une clôture / devoir à la maison sans icône d'horloge dédiée sur le plan, intègre-la comme dernière puce (« Clôture et devoir ») dans la dernière station.
    - {station_rule}
 
