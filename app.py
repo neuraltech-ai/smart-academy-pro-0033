@@ -2194,6 +2194,29 @@ def fix_arabic_bidi(s):
     s = re.sub(r'\(([^()]+)\)', wrap_paren, s)
     return s
 
+def extract_slide_duration_hints(text):
+    """استخراج جميع السطور التي تحتوي على مدد زمنية من نص الشرائح حرفياً للتحقق البصري والنصي"""
+    if not text:
+        return ""
+    dur_rx = re.compile(
+        r'(?:\d+\s*(?:دقيقة|دقائق|دق|د(?![\u0600-\u06FF])|min\.?|mn\b|\')|(?:دقيقة\s+واحدة|دقيقتان|دقيقتين))',
+        re.IGNORECASE
+    )
+    hints = []
+    seen = set()
+    for raw_ln in str(text).splitlines():
+        ln = re.sub(r'\s+', ' ', raw_ln).strip()
+        if not ln or len(ln) > 160:
+            continue
+        if dur_rx.search(ln) and ln not in seen:
+            seen.add(ln)
+            hints.append(ln)
+            if len(hints) >= 28:
+                break
+    if not hints:
+        return ""
+    return "\n[مؤشرات المدد المستخرجة حرفياً من نص الشرائح — التزم بها وبالقراءة البصرية لأيقونات الساعات حرفياً]:\n- " + "\n- ".join(hints) + "\n"
+
 def clean_ar_text(s, is_objective=False):
     if not s:
         return s
