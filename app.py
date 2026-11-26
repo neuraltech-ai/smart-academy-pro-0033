@@ -367,18 +367,110 @@ def apply_fast_thinking_cfg(model_name, cfg):
         cfg["thinkingConfig"] = {"thinkingBudget": 0}
     return cfg
 
+def get_openrouter_models():
+    """النماذج المستعملة على OpenRouter بالترتيب (قابلة للتغيير عبر متغير البيئة OPENROUTER_MODEL)"""
+    raw = os.environ.get('OPENROUTER_MODEL', '').strip()
+    if raw:
+        return [m.strip() for m in re.split(r'[\s,;]+', raw) if m.strip()]
+    return ["google/gemini-2.5-flash", "google/gemini-2.0-flash-001"]
+
+def parts_to_openrouter_content(parts):
+    """تحويل أجزاء طلب Gemini (نص + ملف base64) إلى صيغة OpenRouter"""
+    content = []
+    for p in parts:
+        if p.get('text'):
+            content.append({"type": "text", "text": p['text']})
+        inline = p.get('inline_data') or p.get('inlineData')
+        if inline and inline.get('data'):
+            mime = inline.get('mime_type') or inline.get('mimeType') or 'application/octet-stream'
+            data_url = f"data:{mime};base64,{inline['data']}"
+            if mime.startswith('image/'):
+                content.append({"type": "image_url", "image_url": {"url": data_url}})
+            else:
+                content.append({"type": "file", "file": {"filename": "lesson.pdf" if mime == 'application/pdf' else "document", "file_data": data_url}})
+    return content
+
+def call_openrouter_api(or_keys, parts, json_mode=False, temperature=0.05, deadline=None):
+    """خطة احتياطية: إرسال نفس الطلب إلى OpenRouter عند فشل Gemini"""
+    if not or_keys:
+        return None, "لا يوجد مفتاح OpenRouter"
+    deadline = deadline or (time.time() + 50)
+    content = parts_to_openrouter_content(parts)
+    errors = []
+    for model in get_openrouter_models():
+        for key in or_keys:
+            remaining = int(deadline - time.time())
+            if remaining < 8:
+                errors.append("OpenRouter: لم يتبق وقت كافٍ")
+                return None, " | ".join(errors)
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": content}],
+                "temperature": temperature,
+                "max_tokens": 8192
+            }
+            if json_mode:
+                payload["response_format"] = {"type": "json_object"}
+            try:
+                res = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": os.environ.get("APP_PUBLIC_URL", "https://smart-academy-pro.vercel.app"),
+                        "X-Title": "Smart Academy Pro"
+                    },
+                    timeout=min(45, remaining)
+                )
+                if res.status_code == 200:
+                    choices = (res.json().get('choices') or [])
+                    msg = (choices[0].get('message') or {}) if choices else {}
+                    out_text = msg.get('content') or ''
+                    if isinstance(out_text, list):
+                        out_text = "\n".join(c.get('text', '') for c in out_text if isinstance(c, dict))
+                    out_text = str(out_text).strip()
+                    if out_text and (not json_mode or extract_json_object(out_text) is not None):
+                        return out_text, None
+                    errors.append(f"OpenRouter {model}: استجابة فارغة أو JSON غير مكتمل")
+                    continue
+                try:
+                    err_msg = res.json().get('error', {}).get('message', '')
+                except Exception:
+                    err_msg = ''
+                errors.append(f"OpenRouter {model}: HTTP {res.status_code} {err_msg[:80]}".strip())
+                if res.status_code in (401, 402, 403):
+                    # مفتاح غير صالح أو رصيد غير كافٍ: لا فائدة من تجربة نموذج آخر بنفس المفتاح
+                    continue
+                if res.status_code in (400, 404):
+                    break  # النموذج غير متاح أو لا يدعم هذا النوع من الملفات: ننتقل للنموذج التالي
+            except requests.exceptions.Timeout:
+                errors.append(f"OpenRouter {model}: انتهاء المهلة")
+            except Exception as e:
+                errors.append(f"OpenRouter {model}: {str(e)[:60]}")
+    return None, " | ".join(errors[:6]) or "تعذر الاتصال بـ OpenRouter"
+
 def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigor=False):
-    keys = [k.strip() for k in re.split(r'[\s,;]+', str(api_key or '')) if k.strip()]
-    or_deadline = time.time() + 54
+    all_keys = [k.strip() for k in re.split(r'[\s,;]+', str(api_key or '')) if k.strip()]
+    keys = [k for k in all_keys if not k.startswith('sk-or-')]
+    or_deadline = time.time() + 56
     env_or_raw = ' '.join([
         os.environ.get('OPENROUTER_API_KEY', ''),
         os.environ.get('OPENROUTER_KEY', ''),
         os.environ.get('OPEN_ROUTER_API_KEY', '')
     ])
     env_or = [k.strip() for k in re.split(r'[\s,;]+', env_or_raw) if k.strip()]
-    or_keys = [k for k in env_or if k.startswith('sk-or-')]
-    if not keys:
+    or_keys = []
+    for k in env_or + [k for k in all_keys if k.startswith('sk-or-')]:
+        if k.startswith('sk-or-') and k not in or_keys:
+            or_keys.append(k)
+    if not keys and not or_keys:
         return None, "لا يوجد مفتاح API متاح"
+    if not keys:
+        return call_openrouter_api(or_keys, parts, json_mode=json_mode, temperature=temperature, deadline=or_deadline)
+
+    # عند توفر OpenRouter نترك له وقتاً كافياً داخل مهلة الخادم
+    gem_budget = 30 if or_keys else 50
 
     random.shuffle(keys)
     candidate_models = discover_live_models(keys, high_rigor=high_rigor)
@@ -395,7 +487,7 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
     start_ts = time.time()
 
     for model_name in candidate_models:
-        if time.time() - start_ts > 48:
+        if time.time() - start_ts > gem_budget - 2:
             break
 
         zero_limit_hits = 0
@@ -404,9 +496,9 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
             if current_key in dead_keys:
                 continue
             elapsed = time.time() - start_ts
-            if elapsed > 50:
+            if elapsed > gem_budget:
                 break
-            req_timeout = max(12, min((22 if 'preview' in model_name else (32 if high_rigor else 22)), int(54 - elapsed)))
+            req_timeout = max(8, min((22 if 'preview' in model_name else (32 if high_rigor else 22)), int(gem_budget + 4 - elapsed)))
             headers = {'Content-Type': 'application/json', 'x-goog-api-key': current_key}
 
             req_gen_config = apply_fast_thinking_cfg(model_name, dict(base_gen_config))
@@ -492,6 +584,12 @@ def call_gemini_api(api_key, parts, json_mode=False, temperature=0.05, high_rigo
 
         if model_last_err:
             model_errors.append(f"{model_name}: {model_last_err}")
+
+    if or_keys:
+        or_text, or_err = call_openrouter_api(or_keys, parts, json_mode=json_mode, temperature=temperature, deadline=or_deadline)
+        if or_text:
+            return or_text, None
+        model_errors.append(or_err or "OpenRouter: فشل")
 
     if model_errors:
         return None, " | ".join(model_errors[:8])
@@ -777,6 +875,24 @@ HTML_TEMPLATE = r"""
             flex-shrink: 0;
         }
 
+        .meta-input {
+            width: 100%;
+            padding: 7px 8px;
+            border-radius: 10px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            color: #ffffff;
+            text-align: center;
+            font-size: 12px;
+            font-weight: 700;
+            outline: none;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .meta-input:focus { border-color: #06b6d4; }
+        .meta-input.auto-filled { border-color: rgba(6, 182, 212, 0.6); background: rgba(6, 182, 212, 0.10); }
+        .meta-input.manual { border-color: rgba(245, 158, 11, 0.45); }
+        .meta-input.manual:focus { border-color: #f59e0b; }
+
         [contenteditable="true"]:focus { outline: 2px dashed #f59e0b; background: rgba(245, 158, 11, 0.1); border-radius: 4px; }
 
         .prose-output {
@@ -966,22 +1082,22 @@ HTML_TEMPLATE = r"""
             <button type="button" onclick="switchSection('ncm')" id="card-ncm" class="nav-card active p-3.5 rounded-2xl bg-slate-900/90 border border-cyan-500/50 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🗺️</span>
                 <span class="text-xs font-black text-white">خطاطات الدروس</span>
-                <span class="text-[10px] text-slate-400 font-semibold">المدرسة الرائدة • التعليم الصريح</span>
+                <span class="text-[10.5px] text-slate-300 font-semibold">المدرسة الرائدة • التعليم الصريح</span>
             </button>
             <button type="button" onclick="switchSection('solver')" id="card-solver" class="nav-card p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">📐</span>
                 <span class="text-xs font-black text-slate-100">حل المسائل والتمارين</span>
-                <span class="text-[10px] text-slate-400 font-semibold">تحليل علمي • خطوة بخطوة</span>
+                <span class="text-[10.5px] text-slate-300 font-semibold">تحليل علمي • خطوة بخطوة</span>
             </button>
             <button type="button" onclick="switchSection('summarizer')" id="card-summarizer" class="nav-card p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">📑</span>
                 <span class="text-xs font-black text-slate-100">تلخيص المحاضرات والدروس</span>
-                <span class="text-[10px] text-slate-400 font-semibold">هيكلة المحاور والمفاهيم</span>
+                <span class="text-[10.5px] text-slate-300 font-semibold">هيكلة المحاور والمفاهيم</span>
             </button>
             <button type="button" onclick="switchSection('translator')" id="card-translator" class="nav-card p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-md flex flex-col items-center text-center gap-1">
                 <span class="text-2xl">🌐</span>
                 <span class="text-xs font-black text-slate-100">الترجمة الأكاديمية</span>
-                <span class="text-[10px] text-slate-400 font-semibold">ترجمة علمية وتربوية</span>
+                <span class="text-[10.5px] text-slate-300 font-semibold">ترجمة علمية وتربوية</span>
             </button>
         </div>
 
@@ -1006,7 +1122,7 @@ HTML_TEMPLATE = r"""
                     <div class="flex items-center gap-2 mb-2.5">
                         <label class="flex-1 min-w-0 cursor-pointer bg-slate-800/90 hover:bg-slate-800 border-2 border-dashed border-cyan-500/50 rounded-2xl p-3 text-center transition flex items-center justify-center gap-2">
                             <span class="text-lg flex-shrink-0">📂</span>
-                            <span id="ncmFileName" class="text-xs font-bold text-slate-200 truncate">اختر ملف الدرس (.pptx / .pdf / صورة)</span>
+                            <span id="ncmFileName" class="text-xs font-bold text-slate-200 truncate">اختر ملف الدرس (PDF، PPTX أو صورة)</span>
                             <input type="file" id="ncmFileInput" accept=".pptx,.ppt,.pdf,image/*,.txt" class="hidden" onchange="handleNcmFile(this)">
                         </label>
                         <button type="button" id="ncmClearBtn" onclick="clearNcmFile()" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
@@ -1014,10 +1130,11 @@ HTML_TEMPLATE = r"""
                     <textarea id="ncmTextInput" rows="3" placeholder="أو الصق محتوى الدرس أو الجذاذة هنا..." class="w-full p-3 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-cyan-500 outline-none"></textarea>
                 </div>
 
-                <div class="bg-slate-900/75 p-4 rounded-2xl border border-slate-800 flex flex-col justify-between">
+                <div class="bg-slate-900/75 p-4 rounded-2xl border border-slate-800 flex flex-col gap-4">
                     <div>
-                        <label class="block text-xs font-bold text-cyan-400 mb-2">2. عدد المحطات وبيانات الترويسة:</label>
-                        <div class="grid grid-cols-6 gap-1.5 mb-3">
+                        <label class="block text-xs font-bold text-cyan-400 mb-1">2. عدد المحطات:</label>
+                        <p class="text-[10.5px] text-slate-300 mb-2">«تلقائي»: يحدد الذكاء الاصطناعي العدد المناسب حسب محتوى الدرس.</p>
+                        <div class="grid grid-cols-6 gap-1.5">
                             <button type="button" onclick="setStations(0)" id="st-btn-0" class="st-btn active-st py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-[11px] text-white">تلقائي</button>
                             <button type="button" onclick="setStations(2)" id="st-btn-2" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">2</button>
                             <button type="button" onclick="setStations(3)" id="st-btn-3" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">3</button>
@@ -1025,15 +1142,20 @@ HTML_TEMPLATE = r"""
                             <button type="button" onclick="setStations(5)" id="st-btn-5" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">5</button>
                             <button type="button" onclick="setStations(6)" id="st-btn-6" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">6</button>
                         </div>
-                        <div class="grid grid-cols-3 gap-1.5 mb-2">
-                            <input id="metaLevel" type="text" placeholder="المستوى" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-center text-[11px] text-white">
-                            <input id="metaPeriode" type="text" placeholder="المرحلة" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-center text-[11px] text-white">
-                            <input id="metaUnite" type="text" placeholder="الوحدة" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-center text-[11px] text-white">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-cyan-400 mb-1">3. بيانات الترويسة:</label>
+                        <p class="text-[10.5px] text-slate-300 mb-2">✨ تُملأ تلقائياً من اسم الملف، ويمكنك تعديلها.</p>
+                        <div class="grid grid-cols-2 gap-2 mb-3">
+                            <div><label for="metaLevel" class="block text-[10.5px] font-bold text-slate-300 mb-1">المستوى</label><input id="metaLevel" type="text" class="meta-input"></div>
+                            <div><label for="metaPeriode" class="block text-[10.5px] font-bold text-slate-300 mb-1">المرحلة</label><input id="metaPeriode" type="text" class="meta-input"></div>
+                            <div><label for="metaSemaine" class="block text-[10.5px] font-bold text-slate-300 mb-1">الأسبوع</label><input id="metaSemaine" type="text" class="meta-input"></div>
+                            <div><label for="metaSeance" class="block text-[10.5px] font-bold text-slate-300 mb-1">الحصة</label><input id="metaSeance" type="text" class="meta-input"></div>
                         </div>
-                        <div class="grid grid-cols-3 gap-1.5">
-                            <input id="metaSemaine" type="text" placeholder="الأسبوع" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-center text-[11px] text-white">
-                            <input id="metaSeance" type="text" placeholder="الحصة" class="p-1.5 rounded-lg bg-slate-800 border border-slate-700 text-center text-[11px] text-white">
-                            <input id="ncmNumInput" type="text" value="" placeholder="رقم الخطاطة" class="p-1.5 rounded-lg bg-slate-800 border border-amber-500/50 text-center font-black text-[11px] text-amber-300">
+                        <p class="text-[10.5px] text-amber-300 mb-2">✍️ أدخلها بنفسك (تُحفظ للمرة القادمة):</p>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div><label for="metaUnite" class="block text-[10.5px] font-bold text-slate-300 mb-1">الوحدة</label><input id="metaUnite" type="text" class="meta-input manual"></div>
+                            <div><label for="ncmNumInput" class="block text-[10.5px] font-bold text-slate-300 mb-1">رقم الخطاطة</label><input id="ncmNumInput" type="text" class="meta-input manual"></div>
                         </div>
                     </div>
                 </div>
@@ -1098,7 +1220,7 @@ HTML_TEMPLATE = r"""
                     <div class="flex items-center gap-2 mb-3">
                         <label class="flex-1 min-w-0 cursor-pointer bg-slate-800/90 hover:bg-slate-800 border-2 border-dashed border-cyan-500/40 rounded-2xl p-3 text-center flex items-center justify-center gap-2">
                             <span class="text-lg flex-shrink-0">📷</span>
-                            <span id="solverFileName" class="text-xs font-bold text-slate-200 truncate">ارفع صورة المسألة أو ملف التمرين (.pdf / .pptx / صورة)</span>
+                            <span id="solverFileName" class="text-xs font-bold text-slate-200 truncate">ارفع صورة المسألة أو ملف التمرين (PDF، PPTX أو صورة)</span>
                             <input type="file" id="solverFileInput" accept="image/*,.pdf,.pptx,.txt" class="hidden" onchange="handleToolFile(this, 'solver')">
                         </label>
                         <button type="button" id="solverClearBtn" onclick="clearToolFile('solver')" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
@@ -1171,7 +1293,7 @@ HTML_TEMPLATE = r"""
                     <div class="flex items-center gap-2 mb-3">
                         <label class="flex-1 min-w-0 cursor-pointer bg-slate-800/90 hover:bg-slate-800 border-2 border-dashed border-amber-500/40 rounded-2xl p-3 text-center flex items-center justify-center gap-2">
                             <span class="text-lg flex-shrink-0">📄</span>
-                            <span id="summarizerFileName" class="text-xs font-bold text-slate-200 truncate">ارفع ملف الدرس أو المحاضرة (.pdf / .pptx / صورة)</span>
+                            <span id="summarizerFileName" class="text-xs font-bold text-slate-200 truncate">ارفع ملف الدرس أو المحاضرة (PDF، PPTX أو صورة)</span>
                             <input type="file" id="summarizerFileInput" accept=".pdf,.pptx,image/*,.txt" class="hidden" onchange="handleToolFile(this, 'summarizer')">
                         </label>
                         <button type="button" id="summarizerClearBtn" onclick="clearToolFile('summarizer')" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
@@ -1218,7 +1340,7 @@ HTML_TEMPLATE = r"""
                     <div class="flex items-center gap-2 mb-3">
                         <label class="flex-1 min-w-0 cursor-pointer bg-slate-800/90 hover:bg-slate-800 border-2 border-dashed border-emerald-500/40 rounded-2xl p-3 text-center flex items-center justify-center gap-2">
                             <span class="text-lg flex-shrink-0">🌍</span>
-                            <span id="translatorFileName" class="text-xs font-bold text-slate-200 truncate">ارفع ملفاً أو وثيقة للترجمة (.pdf / .pptx / صورة)</span>
+                            <span id="translatorFileName" class="text-xs font-bold text-slate-200 truncate">ارفع ملفاً أو وثيقة للترجمة (PDF، PPTX أو صورة)</span>
                             <input type="file" id="translatorFileInput" accept=".pdf,.pptx,image/*,.txt" class="hidden" onchange="handleToolFile(this, 'translator')">
                         </label>
                         <button type="button" id="translatorClearBtn" onclick="clearToolFile('translator')" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
@@ -1257,6 +1379,35 @@ HTML_TEMPLATE = r"""
         const savedKey = localStorage.getItem('gemini_api_key') || '';
         const apiKeyField = document.getElementById('apiKeyInput');
         if (apiKeyField) apiKeyField.value = savedKey;
+
+        // تذكّر آخر وحدة ورقم خطاطة، واقتراح الرقم التالي
+        let lastGeneratedNum = '';
+        function restoreManualMeta() {
+            try {
+                const u = localStorage.getItem('ncm_last_unite');
+                const n = localStorage.getItem('ncm_last_num');
+                if (u) document.getElementById('metaUnite').value = u;
+                if (n && /^\d+$/.test(n)) {
+                    lastGeneratedNum = n;
+                    document.getElementById('ncmNumInput').value = String(parseInt(n, 10) + 1);
+                }
+            } catch (_) {}
+        }
+        function saveManualMeta() {
+            try {
+                const u = document.getElementById('metaUnite').value.trim();
+                const n = document.getElementById('ncmNumInput').value.trim();
+                if (u) localStorage.setItem('ncm_last_unite', u);
+                if (n) { localStorage.setItem('ncm_last_num', n); lastGeneratedNum = n; }
+            } catch (_) {}
+        }
+        function suggestNextNcmNum() {
+            const el = document.getElementById('ncmNumInput');
+            if (lastGeneratedNum && /^\d+$/.test(lastGeneratedNum) && el.value.trim() === lastGeneratedNum) {
+                el.value = String(parseInt(lastGeneratedNum, 10) + 1);
+            }
+        }
+        restoreManualMeta();
 
         function fitNcmToSinglePage() {
             const sheet = document.getElementById('ncmSheet');
@@ -1340,7 +1491,6 @@ HTML_TEMPLATE = r"""
             const lvlJoint = fn.match(/(?:N|NIVEAU|AEP)[_-]?(\d\s*[\&\+\-]\s*\d)/);
             const lvlSingle = fn.match(/(?:N|NIVEAU|AEP)[_-]?(\d)/) || fn.match(/(\d)AEP/);
             const per = fn.match(/P(\d)/);
-            const uni = fn.match(/U(\d)/);
             const sem = fn.match(/SEM[_-]?(\d+)/) || fn.match(/W(\d+)/);
             const sea = fn.match(/_S(\d+)/) || fn.match(/SEANCE[_-]?(\d+)/);
             if (lvlJoint && !document.getElementById('metaLevel').value) {
@@ -1349,13 +1499,8 @@ HTML_TEMPLATE = r"""
                 document.getElementById('metaLevel').value = lvlSingle[1];
             }
             if (per && !document.getElementById('metaPeriode').value) document.getElementById('metaPeriode').value = per[1];
-            if (uni && !document.getElementById('metaUnite').value) document.getElementById('metaUnite').value = uni[1];
             if (sem && !document.getElementById('metaSemaine').value) document.getElementById('metaSemaine').value = sem[1];
             if (sea && !document.getElementById('metaSeance').value) document.getElementById('metaSeance').value = sea[1];
-            const ncmMatch = fn.match(/NCM[_-]?(\d+)/) || fn.match(/FICHE[_-]?(\d+)/);
-            if (ncmMatch && !document.getElementById('ncmNumInput').value) {
-                document.getElementById('ncmNumInput').value = ncmMatch[1];
-            }
         }
 
         function switchSection(secId) {
@@ -1797,8 +1942,7 @@ HTML_TEMPLATE = r"""
                                 const tx = t.x + t.w / 2, ty = t.y + t.h / 2;
                                 return tx >= it.x - it.w * 0.25 && tx <= it.x + it.w * 1.25 && ty >= it.y - it.h * 0.25 && ty <= it.y + it.h * 1.25;
                             }).map(t => t.text.trim()).filter(Boolean);
-                            const _stLabels = ['Station 1 (25 min)', 'Station 2 (20 min)', 'Station 3 (10 min)'];
-                        const baseLbl = _stLabels[idx] || (sameRowTexts.length ? sameRowTexts[0].text.trim().slice(0, 32) : `Station ${idx + 1}`);
+                            const baseLbl = sameRowTexts.length ? sameRowTexts[0].text.trim().slice(0, 32) : `Station ${idx + 1}`;
                             const overlayStr = overlapTexts.join(' ').trim();
                             const slotTag = `[Clock ${idx + 1} - ${baseLbl}]`;
                         detectedClockHints.push(overlayStr ? `${slotTag}: ${overlayStr}` : `${slotTag}: see zoomed clock icon #${idx + 1}`);
@@ -1829,8 +1973,6 @@ HTML_TEMPLATE = r"""
                             }
                         });
                     }
-                    if (detectedClockHints.length > 0 && typeof textRuns !== 'undefined') {
-}
                     planImageB64 = canvas.toDataURL('image/jpeg', 0.84).split(',')[1];
                     try {
                         const _ta = document.getElementById('ncmTextInput');
@@ -1860,6 +2002,7 @@ HTML_TEMPLATE = r"""
             ncmUploadedFilename = file.name;
             document.title = file.name.replace(/\.[^/.]+$/, '');
             autofillMetaFromFilename(file.name);
+            suggestNextNcmNum();
             const labelEl = document.getElementById('ncmFileName');
             labelEl.innerText = "⏳ جاري قراءة الملف والمدد الزمنية: " + formatShortName(file.name);
             document.getElementById('ncmClearBtn').classList.remove('hidden');
@@ -1911,9 +2054,9 @@ HTML_TEMPLATE = r"""
 
         function clearNcmFile() {
             document.getElementById('ncmFileInput').value = '';
-            document.getElementById('ncmFileName').innerText = 'اختر ملف الدرس (.pptx / .pdf / صورة)';
+            document.getElementById('ncmFileName').innerText = 'اختر ملف الدرس (PDF، PPTX أو صورة)';
             document.getElementById('ncmClearBtn').classList.add('hidden');
-            ['metaLevel','metaPeriode','metaUnite','metaSemaine','metaSeance','ncmNumInput'].forEach(id => document.getElementById(id).value = '');
+            ['metaLevel','metaPeriode','metaSemaine','metaSeance'].forEach(id => { const el = document.getElementById(id); el.value = ''; el.classList.remove('auto-filled'); });
             ncmBase64 = null; ncmMime = null; ncmUploadedFilename = '';
             document.title = 'الأكاديمية الذكية Pro';
         }
@@ -1950,7 +2093,7 @@ HTML_TEMPLATE = r"""
         function clearToolFile(toolKey) {
             document.getElementById(toolKey + 'FileInput').value = '';
             toolFiles[toolKey] = {};
-            document.getElementById(toolKey + 'FileName').innerText = 'ارفع ملفاً أو صورة (.pdf / .pptx / صورة)';
+            document.getElementById(toolKey + 'FileName').innerText = 'ارفع ملفاً أو صورة (PDF، PPTX أو صورة)';
             document.getElementById(toolKey + 'ClearBtn').classList.add('hidden');
         }
 
@@ -1980,7 +2123,7 @@ HTML_TEMPLATE = r"""
                 });
                 const data = await res.json();
                 if (data.error) { alert(data.error); if (data.need_key) toggleApiModal(); }
-                else { renderNCMSheet(data.result, ncmNum); }
+                else { renderNCMSheet(data.result, ncmNum); saveManualMeta(); }
             } catch(e) { alert('خطأ في الاتصال بالخادم.'); }
             finally { btn.disabled = false; btn.innerHTML = origHtml; }
         }
@@ -2265,6 +2408,7 @@ HTML_TEMPLATE = r"""
     } else {
       el.value = val || '';
     }
+    el.classList.toggle('auto-filled', !!val);
     el.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
@@ -2273,7 +2417,8 @@ HTML_TEMPLATE = r"""
     const parsed = file ? parseMetaFromFilename(file.name) : {
       level: '', periode: '', unite: '', semaine: '', seance: '', ncm_num: ''
     };
-    ['level', 'periode', 'unite', 'semaine', 'seance', 'ncm_num'].forEach(k => {
+    // الوحدة ورقم الخطاطة يدخلهما المستخدم، فلا نلمسهما هنا
+    ['level', 'periode', 'semaine', 'seance'].forEach(k => {
       applyMetaValue(IDS[k], parsed[k]);
     });
   }
@@ -2812,4 +2957,4 @@ Analyze the input thoroughly and produce an executive, deeply structured academi
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=os.environ.get('FLASK_DEBUG') == '1')
