@@ -1127,13 +1127,17 @@ HTML_TEMPLATE = r"""
                         </label>
                         <button type="button" id="ncmClearBtn" onclick="clearNcmFile()" class="hidden flex-shrink-0 px-3.5 py-3 rounded-2xl bg-red-500/20 border border-red-500/30 text-red-300 text-xs font-bold">حذف</button>
                     </div>
+                    <div id="ncmExtractStatus" class="hidden mb-2.5 px-3 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between gap-2">
+                        <span id="ncmExtractMsg" class="text-xs font-bold text-emerald-300"></span>
+                        <button type="button" id="ncmToggleText" onclick="toggleNcmText()" class="hidden flex-shrink-0 px-3 py-1 rounded-xl bg-slate-800 border border-slate-600 text-[11px] font-bold text-slate-200">عرض النص</button>
+                    </div>
                     <textarea id="ncmTextInput" rows="3" placeholder="أو الصق محتوى الدرس أو الجذاذة هنا..." class="w-full p-3 rounded-2xl bg-slate-900 border border-slate-700 text-white text-xs focus:border-cyan-500 outline-none"></textarea>
                 </div>
 
                 <div class="bg-slate-900/75 p-4 rounded-2xl border border-slate-800 flex flex-col gap-4">
                     <div>
                         <label class="block text-xs font-bold text-cyan-400 mb-1">2. عدد المحطات:</label>
-                        <p class="text-[10.5px] text-slate-300 mb-2">«تلقائي»: يحدد الذكاء الاصطناعي العدد المناسب حسب محتوى الدرس.</p>
+                        <p class="text-[10.5px] text-slate-300 mb-2">تلقائي: حسب مراحل الدرس في الملف</p>
                         <div class="grid grid-cols-6 gap-1.5">
                             <button type="button" onclick="setStations(0)" id="st-btn-0" class="st-btn active-st py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-[11px] text-white">تلقائي</button>
                             <button type="button" onclick="setStations(2)" id="st-btn-2" class="st-btn py-2 rounded-xl border border-slate-700 bg-slate-800 font-black text-xs text-white">2</button>
@@ -1472,6 +1476,7 @@ HTML_TEMPLATE = r"""
             clearTimeout(adminTapTimer);
             if (adminTapCounter >= 5) {
                 adminTapCounter = 0;
+                window.__adminMode = true;  // يُظهر أدوات المطوّر (معاينة شريحة التوقيت) حتى إعادة تحميل الصفحة
                 toggleApiModal();
             } else {
                 adminTapTimer = setTimeout(() => { adminTapCounter = 0; }, 1800);
@@ -1976,7 +1981,7 @@ HTML_TEMPLATE = r"""
                     planImageB64 = canvas.toDataURL('image/jpeg', 0.84).split(',')[1];
                     try {
                         const _ta = document.getElementById('ncmTextInput');
-                        if (_ta && _ta.parentNode && planImageB64) {
+                        if (window.__adminMode && _ta && _ta.parentNode && planImageB64) {
                             let _box = document.getElementById('planSlideDebugPreview');
                             if (!_box) {
                                 _box = document.createElement('div');
@@ -2018,11 +2023,21 @@ HTML_TEMPLATE = r"""
                         ncmBase64 = null; ncmMime = null;
                     }
                     labelEl.innerText = "✅ " + formatShortName(file.name);
+                    const slidesN = (resObj.text.match(/\[Slide \d+\]/g) || []).length;
+                    showNcmExtractStatus(
+                        `✅ تم استخراج نص ${slidesN} شريحة` + (resObj.planImageB64 ? ' والتعرف على مراحل الدرس' : ''),
+                        !!resObj.text
+                    );
                 } catch (err) {
                     const fd = new FormData(); fd.append('file', file);
                     const res = await fetch('/extract_pptx', { method: 'POST', body: fd });
                     const data = await res.json();
-                    if (data.text) { document.getElementById('ncmTextInput').value = data.text; ncmBase64 = null; }
+                    if (data.text) {
+                        document.getElementById('ncmTextInput').value = data.text;
+                        ncmBase64 = null;
+                        const slidesN = (data.text.match(/\[Slide \d+\]/g) || []).length;
+                        showNcmExtractStatus(`✅ تم استخراج نص ${slidesN} شريحة`, true);
+                    }
                     labelEl.innerText = "✅ " + formatShortName(file.name);
                 }
                 return;
@@ -2033,6 +2048,7 @@ HTML_TEMPLATE = r"""
                     ncmBase64 = e.target.result.split(',')[1];
                     ncmMime = 'application/pdf';
                     labelEl.innerText = "✅ " + formatShortName(file.name);
+                    showNcmExtractStatus('✅ الملف جاهز وسيُقرأ مباشرة عند التوليد', false);
                 };
                 reader.readAsDataURL(file);
             } else if (file.type.startsWith('image/')) {
@@ -2040,6 +2056,7 @@ HTML_TEMPLATE = r"""
                     ncmBase64 = b;
                     ncmMime = m;
                     labelEl.innerText = "✅ " + formatShortName(file.name);
+                    showNcmExtractStatus('✅ الصورة جاهزة وستُقرأ مباشرة عند التوليد', false);
                 });
             } else {
                 const reader = new FileReader();
@@ -2047,12 +2064,35 @@ HTML_TEMPLATE = r"""
                     document.getElementById('ncmTextInput').value = e.target.result;
                     ncmBase64 = null;
                     labelEl.innerText = "✅ " + formatShortName(file.name);
+                    showNcmExtractStatus('✅ تم تحميل نص الملف', true);
                 };
                 reader.readAsText(file);
             }
         }
 
+        function showNcmExtractStatus(msg, hasText) {
+            document.getElementById('ncmExtractMsg').innerText = msg;
+            document.getElementById('ncmExtractStatus').classList.remove('hidden');
+            const tgl = document.getElementById('ncmToggleText');
+            tgl.classList.toggle('hidden', !hasText);
+            tgl.innerText = 'عرض النص';
+            document.getElementById('ncmTextInput').classList.add('hidden');
+        }
+        function hideNcmExtractStatus() {
+            document.getElementById('ncmExtractStatus').classList.add('hidden');
+            document.getElementById('ncmTextInput').classList.remove('hidden');
+            const dbg = document.getElementById('planSlideDebugPreview');
+            if (dbg) dbg.remove();
+        }
+        function toggleNcmText() {
+            const ta = document.getElementById('ncmTextInput');
+            const hidden = ta.classList.toggle('hidden');
+            document.getElementById('ncmToggleText').innerText = hidden ? 'عرض النص' : 'إخفاء النص';
+        }
+
         function clearNcmFile() {
+            hideNcmExtractStatus();
+            document.getElementById('ncmTextInput').value = '';
             document.getElementById('ncmFileInput').value = '';
             document.getElementById('ncmFileName').innerText = 'اختر ملف الدرس (PDF، PPTX أو صورة)';
             document.getElementById('ncmClearBtn').classList.add('hidden');
